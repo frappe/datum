@@ -12,8 +12,11 @@ datum = Datum("https://datum.internal:8000", token=DATUM_JWT)
 memory = Batch("system", "memory")
 memory.gauge("used", 1154545090, "bytes")
 
-datum.send(memory)
+datum.record(memory)
 ```
+
+That is the whole loop. `record` does not post — it buffers, and posts only
+once the buffer is full or the interval has passed. Call it every tick.
 
 ## The three pieces
 
@@ -21,7 +24,7 @@ datum.send(memory)
 
 **`Batch`** — a bag of samples that share a name prefix and some labels.
 
-**`send`** — takes any number of batches, sends them in one POST.
+**`record`** — hands batches to the client. Posts only when one is due.
 
 ```
 Batch("pilot", "process", bench="bench_0001")
@@ -30,11 +33,55 @@ Batch("pilot", "process", bench="bench_0001")
   │       └─ namespace
   └─ each gauge/counter/up/info call adds one sample
 
-send(batch, other) -> all their samples -> 1 POST
+record(batch, other) -> buffer -> 1 POST per 500 samples or 10 seconds
 ```
 
-One collection tick should be one `send`. Many sends means many chances to
-block the tick.
+## When it actually posts
+
+There is no background thread. The drain runs on whichever `record` finds one
+owed, so exactly one call in every interval pays for the request and the rest
+are close to free.
+
+| Setting | Default | Means |
+|---|---|---|
+| `flush_at` | 500 | samples buffered before the next `record` drains |
+| `flush_interval` | 10.0 | seconds a sample may sit before the next `record` drains |
+| `timeout` | 2.0 | seconds one POST may take |
+
+**The client never throws a sample away.** There is no buffer ceiling and no
+trimming: a sample leaves the buffer by being posted. Hand over more than
+`flush_at` in one go and it ships in as many requests as it takes, chunked to
+10 000 each, which is what datum accepts.
+
+Which makes the buffer yours to size. A buffered sample costs about 550 bytes,
+and the buffer holds at most `flush_at` plus one batch, so the default sits
+around 5 MB and `flush_at=100_000` would be roughly 55 MB. Nothing here caps
+it — a client that trims to protect its own memory is a client that loses your
+numbers.
+
+Two consequences worth knowing:
+
+- **A process that stops recording holds its tail.** Nothing drains on its own.
+  A clean exit flushes; a `SIGKILL` loses what was buffered. Same trade the
+  service makes — a gap in a chart beats a stalled producer.
+- **If your host has a scheduler, point it at `flush()`.** It is public and
+  cheap when nothing is due, and calling it on a timer takes the POST off the
+  producer's tick entirely. The interval then only matters as a backstop.
+
+```python
+datum.flush()  # post now, returns how many samples went
+datum.close()  # flush and stop tracking this client
+```
+
+`Datum` is also a context manager, which flushes on the way out:
+
+```python
+with Datum(url, token=DATUM_JWT) as datum:
+    datum.record(batch)
+```
+
+If datum is unreachable the samples are dropped rather than retried — but by
+the network, not by the client. Nothing here ever raises because of it.
 
 ## Naming
 
@@ -74,8 +121,8 @@ Every method returns the batch, so you can chain:
 Batch("system", "memory").gauge("used", u, "bytes").gauge("free", f, "bytes")
 ```
 
-One batch has one subsystem. Need more? Make more batches and send them
-together. Still one POST.
+One batch has one subsystem. Need more? Make more batches and record them
+together.
 
 ```python
 memory = Batch("system", "memory")
@@ -84,7 +131,7 @@ memory.gauge("used", used_bytes, "bytes")  # system_memory_used_bytes
 cpu = Batch("system", "cpu")
 cpu.gauge("usage", 12.5, "percent")  # system_cpu_usage_percent
 
-datum.send(memory, cpu)
+datum.record(memory, cpu)
 ```
 
 Batches stay separate on purpose. One can never write into another.
@@ -222,8 +269,8 @@ Stored in milliseconds. Anything finer is lost.
 ## Sending
 
 ```python
-status = datum.send(batch)
-status = datum.send(system, memory, cpu)  # still one POST
+datum.record(batch)
+datum.record(system, memory, cpu)  # buffered, posted when due
 ```
 
 Fire and forget. One POST, 2 second timeout, no retry, no queue on disk.
@@ -234,13 +281,23 @@ this client at all — point its `remote_write` at `/v1/ingest/remote` instead.
 Same token, same rules. This client exists for producers that have numbers in
 hand and no agent to hand them to.
 
-- Network failure does **not** raise. You get `0`.
-- You get the HTTP status back. Watch for `401` and `422` — those are bugs, not
-  blips. Both are logged as warnings on the `datum` logger.
-- `ValueError` **is** raised if the batches add up to more than 10 000 samples.
-  That is your bug, caught before sending.
-- `send()` with nothing, or with empty batches, returns `0` and opens no
-  connection.
+- Network failure does **not** raise. Nothing `record` or `flush` does raises
+  because datum was unreachable.
+- `401` and `422` are bugs, not blips. Both are logged as warnings on the
+  `datum` logger. Since `record` buffers, watch the log rather than a return
+  value.
+- `record` never raises for size, and never drops for it either. However much
+  you hand over, it ships in 10 000-sample requests.
+
+There is still a one-shot escape hatch for a caller that wants the request now
+and accepts paying for it:
+
+```python
+status = datum.send(batch)  # skips the buffer, returns the status
+```
+
+`send` raises `ValueError` above 10 000 samples in one call, and returns `0`
+for nothing to send. `record` has no such limit — it chunks.
 
 | Status | What happened |
 |---|---|
