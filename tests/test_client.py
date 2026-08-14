@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gc
 import threading
 from contextlib import contextmanager
 
@@ -45,7 +46,8 @@ def posted(monkeypatch):
 
     @contextmanager
     def urlopen(request, timeout=None):
-        recorder.requests.append(json.loads(request.data))
+        body = json.loads(request.data)
+        recorder.requests.append({"url": request.full_url, "samples": body["samples"]})
         if recorder.during:
             recorder.during.pop(0)()
         if recorder.raises:
@@ -181,6 +183,44 @@ def test_the_context_manager_flushes_what_is_left(posted):
         assert posted.requests == []
 
     assert len(posted.samples) == 4
+
+
+def test_a_client_that_goes_out_of_scope_still_sends_what_it_buffered(posted):
+    """Dropping the client is not asking to lose its samples. Waiting for exit
+    is not enough: a client nobody holds is collected long before that."""
+
+    def collect():
+        datum = make_datum()
+        datum.record(batch(4))
+        assert posted.requests == []
+
+    collect()
+    gc.collect()
+
+    assert len(posted.samples) == 4
+
+
+def test_an_abandoned_client_posts_to_the_same_path_a_live_one_does(posted):
+    """The finalizer is handed the url, so it must be the tidied one."""
+
+    def collect():
+        Datum(f"{URL}/", TOKEN, flush_at=10**9).record(batch(1))
+
+    collect()
+    gc.collect()
+
+    assert posted.requests[0]["url"] == f"{URL}/v1/ingest"
+
+
+def test_a_closed_client_does_not_post_again_when_collected(posted):
+    datum = make_datum()
+    datum.record(batch(4))
+    datum.close()
+
+    del datum
+    gc.collect()
+
+    assert len(posted.requests) == 1
 
 
 def test_an_unreachable_datum_never_raises(posted):

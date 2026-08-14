@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import atexit
 import json
 import logging
 import urllib.error
@@ -122,7 +121,11 @@ class Datum:
         self._samples: deque[dict] = deque()
         self._lock = Lock()
         self._flushed_at = monotonic()
-        _LIVE.add(self)
+        # Runs when this client is collected and, failing that, at exit. Both
+        # matter: a client nobody holds is gone long before the process is.
+        self._finalize = weakref.finalize(
+            self, _drain, self._samples, self.url, self.token, self.timeout
+        )
 
     def record(self, *batches: Batch) -> None:
         """Buffer samples, draining after any batch that leaves one owed.
@@ -173,8 +176,9 @@ class Datum:
         )
 
     def close(self) -> int:
+        """Flush, and stand the finalizer down so nothing posts twice."""
         sent = self.flush()
-        _LIVE.discard(self)
+        self._finalize.detach()
         return sent
 
     def __enter__(self) -> Self:
@@ -191,34 +195,39 @@ class Datum:
         return [self._samples.popleft() for _ in range(min(MAX_SAMPLES, owed))]
 
     def _post(self, samples: list[dict]) -> int:
-        """One request. Returns datum's status, or 0 if it could not be reached."""
-        request = urllib.request.Request(
-            f"{self.url}/v1/ingest",
-            data=json.dumps({"samples": samples}).encode(),
-            method="POST",
+        return _post(samples, self.url, self.token, self.timeout)
+
+
+def _drain(samples: deque[dict], url: str, token: str, timeout: float) -> None:
+    """Post what a client left behind.
+
+    Takes the buffer rather than the client, because a finalizer that refers to
+    what it finalizes keeps it alive and so never runs.
+    """
+    while samples:
+        _post(
+            [samples.popleft() for _ in range(min(MAX_SAMPLES, len(samples)))], url, token, timeout
         )
-        request.add_header("Content-Type", "application/json")
-        request.add_header("Authorization", f"Bearer {self.token}")
-
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                return response.status
-        except urllib.error.HTTPError as refused:
-            # A 401 or 422 is our bug, not a blip. Silence here means metrics
-            # stop and nobody notices, so it is logged even though we go on.
-            logger.warning("datum refused %d: %s", refused.code, refused.read()[:500])
-            return refused.code
-        except (urllib.error.URLError, TimeoutError) as unreachable:
-            logger.debug("datum unreachable: %s", unreachable)
-            return 0
 
 
-# Weak, so holding a client for the exit flush does not keep it alive.
-_LIVE: weakref.WeakSet[Datum] = weakref.WeakSet()
+def _post(samples: list[dict], url: str, token: str, timeout: float) -> int:
+    """One request. Returns datum's status, or 0 if it could not be reached."""
+    request = urllib.request.Request(
+        f"{url}/v1/ingest",
+        data=json.dumps({"samples": samples}).encode(),
+        method="POST",
+    )
+    request.add_header("Content-Type", "application/json")
+    request.add_header("Authorization", f"Bearer {token}")
 
-
-@atexit.register
-def _flush_live() -> None:
-    """The tail a quiet process would otherwise hold until it died."""
-    for client in list(_LIVE):
-        client.flush()
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return response.status
+    except urllib.error.HTTPError as refused:
+        # A 401 or 422 is our bug, not a blip. Silence here means metrics
+        # stop and nobody notices, so it is logged even though we go on.
+        logger.warning("datum refused %d: %s", refused.code, refused.read()[:500])
+        return refused.code
+    except (urllib.error.URLError, TimeoutError) as unreachable:
+        logger.debug("datum unreachable: %s", unreachable)
+        return 0

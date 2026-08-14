@@ -62,8 +62,10 @@ numbers.
 Two consequences worth knowing:
 
 - **A process that stops recording holds its tail.** Nothing drains on its own.
-  A clean exit flushes; a `SIGKILL` loses what was buffered. Same trade the
-  service makes — a gap in a chart beats a stalled producer.
+  The tail goes out when the client is collected, and failing that at exit, so
+  a short-lived client that falls out of scope still sends what it buffered.
+  A `SIGKILL` loses it — same trade the service makes, a gap in a chart beats a
+  stalled producer.
 - **If your host has a scheduler, point it at `flush()`.** It is public and
   cheap when nothing is due, and calling it on a timer takes the POST off the
   producer's tick entirely. The interval then only matters as a backstop.
