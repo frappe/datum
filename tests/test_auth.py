@@ -111,6 +111,15 @@ def test_the_public_key_is_what_gates_access():
     assert TokenVerifier().is_configured is False
 
 
+def test_a_token_with_an_aud_claim_is_still_accepted(tokens):
+    """Central mints every token with `aud` (the pilot_credential_id). Datum
+    never reads it — the tenant boundary is `resource_id`, not audience — so
+    a token carrying `aud` must resolve, not raise `InvalidAudienceError`."""
+    token_with_aud = mint({"resource_id": "acme", "access": ["read", "write"], "aud": "pilot-123"})
+
+    assert tokens.resolve(token_with_aud) == IDENTITY
+
+
 def test_an_admin_names_the_fleet_not_a_machine():
     """Central manages resources it did not create samples for, so it carries no
     resource_id of its own."""

@@ -5,7 +5,7 @@ from clickhouse_connect.driver.exceptions import DatabaseError, OperationalError
 
 from datum.api.internals.providers import (
     ClickHouseProvider,
-    MetricProvider,
+    DatumProvider,
     ProviderError,
     QueryRefused,
 )
@@ -51,7 +51,7 @@ ROW = {
 
 
 def test_a_provider_missing_a_method_cannot_be_built():
-    class Half(MetricProvider):
+    class Half(DatumProvider):
         def insert(self, table, rows, columns):
             return 0
 
@@ -66,12 +66,12 @@ def test_building_a_provider_opens_no_connection():
 def test_a_provider_exposes_no_way_to_read():
     """Reads are Insights' job, direct. A read method here would be a second door."""
     for absent in ("fetch", "get_metrics", "get_labels", "get_label_values", "get_columns"):
-        assert not hasattr(MetricProvider, absent)
+        assert not hasattr(DatumProvider, absent)
 
 
 def test_the_provider_issues_no_ddl():
     """Migrations create the schema; datum-api never does."""
-    assert not hasattr(MetricProvider, "ensure_schema")
+    assert not hasattr(DatumProvider, "ensure_schema")
 
 
 def test_a_batch_is_written_in_the_column_order_it_was_given():

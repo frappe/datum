@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 from datum import Settings, create_app
 from datum.api.internals import Identity, TokenVerifier
-from datum.api.internals.providers import MetricProvider
+from datum.api.internals.providers import DatumProvider
 
 SETTINGS = Settings(host="localhost")
 
@@ -54,7 +54,7 @@ awIDAQAB
 """
 
 
-CLAIMS = {"resource_id": "acme", "access": ["read", "write"]}
+CLAIMS = {"resource_id": "acme", "access": ["read", "write"], "aud": "test-audience"}
 IDENTITY = Identity(resource_id="acme", access=frozenset({"read", "write"}))
 
 
@@ -79,7 +79,7 @@ def tamper(token: str) -> str:
     return f"{header}.{payload}.{signature[:index]}{swapped}{signature[index + 1 :]}"
 
 
-class FakeProvider(MetricProvider):
+class FakeProvider(DatumProvider):
     """Stands in for ClickHouse, so route tests open no socket."""
 
     def __init__(self, **options):
@@ -135,6 +135,10 @@ def other_tenant(tokens, provider):
 
 @pytest.fixture
 def anonymous():
-    app = create_app(SETTINGS, tokens=TokenVerifier(), provider=FakeProvider())
+    app = create_app(
+        SETTINGS,
+        tokens=TokenVerifier(),
+        provider=FakeProvider(),
+    )
     with TestClient(app) as test_client:
         yield test_client

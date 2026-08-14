@@ -5,13 +5,13 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from datum.api.internals import Identity, MetricProvider
+from datum.api.internals import DatumProvider, Identity
 from datum.config.limits import MAX_REQUESTS, RATE_PERIOD
 
 bearer = HTTPBearer(auto_error=False, description="JWT minted by Central.")
 
 
-def get_provider(request: Request) -> MetricProvider:
+def get_provider(request: Request) -> DatumProvider:
     """The provider built at startup. Routes talk to it directly."""
     return request.app.state.provider
 
@@ -66,6 +66,6 @@ def get_writer(identity: Caller) -> str:
     return identity.resource_id
 
 
-Provider = Annotated[MetricProvider, Depends(get_provider)]
+Provider = Annotated[DatumProvider, Depends(get_provider)]
 Admin = Annotated[Identity, Depends(get_admin)]
 Writer = Annotated[str, Depends(get_writer)]

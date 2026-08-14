@@ -6,16 +6,17 @@ ClickHouse stores them. Readers get them back from ClickHouse directly — datum
 ## Main Rules
 
 - **ClickHouse is the only storage engine that ships.** There is one escape hatch and it is
-  narrow: `MetricProvider` in `datum/api/internals/providers/base.py`. Supporting another store
+  narrow: `DatumProvider` in `datum/api/internals/providers/base.py`. Supporting another store
   means writing a provider and pointing `app.py` at it — never widening the interface, never
   branching on the backend anywhere else in the service. There is no registry and no
   `DATUM_BACKEND`: choosing between engines was cost with no buyer.
 - **A provider carries no logic.** It writes the rows it is handed into the table it is named,
-  and answers whether the store is up. Nothing else. Routes depend on `MetricProvider`
+  and answers whether the store is up. Nothing else. Routes depend on `DatumProvider`
   directly, with no facade in between.
-- **Routes name their own table and columns.** `ingest.py` and `resource.py` each hold a
-  `TABLE` and a `COLUMNS` constant and pass both to `provider.insert(...)`. The provider knows
-  no table names at all, so adding a table is a new route constant, not a provider change.
+- **Routes name their own table and columns.** `ingest.py`, `logs.py` and `resource.py` each
+  hold a `TABLE` and a `COLUMNS` constant and pass both to `provider.insert(...)`. The provider
+  knows no table names at all, so adding a table is a new route constant, not a provider
+  change.
 - **Datum issues no DDL.** The database, every table and both ClickHouse users are made by
   `datum/migrations/`, run before the service starts. `create_app`'s lifespan pings ClickHouse
   and refuses to start if it cannot answer. Do not add schema creation back into the service:
@@ -26,10 +27,13 @@ ClickHouse stores them. Readers get them back from ClickHouse directly — datum
   and builds rows directly, rather than validating the same strings once per reading. The cost
   is that `NAME` is enforced in two places — `schemas.Sample` and `remote._series`. Change the
   name rule and you change both, or the paths disagree about what is storable.
+- **Log lines are a third write path with their own shape.** `logs.py` builds rows from
+  `LogLine.get_row` and writes them through the same `provider.insert(...)` with its own
+  `LOG_COLUMNS`. No second provider: a table is a route constant, not a backend.
 - **Datum does not read.** `/v1/query`, `/v1/metrics` and `/v1/metrics/{metric}/columns` are
   gone, and so is everything that held them safe: the row policy, `RESOURCE_SETTING`,
   `readonly=1`, the row cap, and the `SHOW GRANTS` audit. Four mechanisms guarding one door
-  Insights never used. Do not add a read method to `MetricProvider` — a second door onto the
+  Insights never used. Do not add a read method to `DatumProvider` — a second door onto the
   same rows brings its own access rules back with it, and those now belong to whoever holds the
   reading credential.
 - **Who may write is the token; who may read is a ClickHouse grant.** Every row is stamped with
@@ -57,6 +61,9 @@ ClickHouse stores them. Readers get them back from ClickHouse directly — datum
     - `001_init_schema.sql` — the database, `samples` and `resources`
     - `002_ingestion_stats.sql` — `daily_ingestion_stats` plus the materialized view that
       fills it from inserts into `samples`
+    - `003_logs.sql` — `logs`, the log lines table
+    - `004_log_stats.sql` — `daily_log_stats`, the log twin of
+      `daily_ingestion_stats`, filled by a view on `logs`
     - `migrations.py` — `datum-migrate`; substitutes the passwords, splits and runs
   - `api/app.py` — `create_app(settings, tokens, provider)`; builds the provider once at
     startup and pings it, so a missing schema fails loudly there
@@ -64,10 +71,10 @@ ClickHouse stores them. Readers get them back from ClickHouse directly — datum
     on `/v1`
   - `api/limiter.py` — `RateLimiter`; counts requests, holds no policy
   - `api/errors.py` — every failure a caller can cause, mapped to its status
-  - `api/routes/v1/` — `ingest.py` and `resource.py`, mounted in `v1/__init__.py`
+  - `api/routes/v1/` — `ingest.py`, `logs.py` and `resource.py`, mounted in `v1/__init__.py`
   - `api/internals/schemas.py` — the published wire contract, and `Sample.get_row`
   - `api/internals/auth.py` — `Identity`, `TokenVerifier`; JWT signature checking
-  - `api/internals/providers/` — `MetricProvider` and `ClickHouseProvider`
+  - `api/internals/providers/` — `DatumProvider` and `ClickHouseProvider`
   - `api/internals/remote/` — Prometheus remote write v1: snappy off, protobuf out, rows in.
     `decode(body, resource_id)` returns table rows, not `Sample`s. The `_pb2.py` is generated;
     regenerate it rather than editing it, and ruff skips it
@@ -75,9 +82,9 @@ ClickHouse stores them. Readers get them back from ClickHouse directly — datum
   the service.
 - `tests/conftest.py` — a fixed test keypair, a `FakeProvider`, and authenticated and
   anonymous clients
-- `tests/` — `test_api.py`, `test_ingest.py`, `test_resource.py`, `test_remote_write.py`,
-  `test_providers.py`, `test_migrations.py`, `test_limits.py`, `test_limiter.py`,
-  `test_auth.py`, `test_key_loading.py`, `test_oidc.py`
+- `tests/` — `test_api.py`, `test_ingest.py`, `test_logs.py`, `test_resource.py`,
+  `test_remote_write.py`, `test_providers.py`, `test_migrations.py`, `test_limits.py`,
+  `test_limiter.py`, `test_auth.py`, `test_key_loading.py`, `test_oidc.py`
 
 There is no installer and no systemd unit in this repo. datum-api is one process, run however
 the host already runs things; the chef `datum` recipe bakes an image that does it.
@@ -141,6 +148,8 @@ Insights ───────────────────────�
   never. A view only sees inserts made after it exists and does not backfill, so adding one in
   a later migration leaves a gap. `SummingMergeTree` sums on merge, so read it with
   `sum(metric_count)` and a `GROUP BY`, not one row per day.
+- `logs` is `MergeTree` sorted by `(resource_id, product, service, ts)`, so a fleet's reads
+  filter on those. `labels`-style leftovers live in its `attributes` map.
 - `labels` is a `Map`. Filtering on a map key is not an index hit the way a sort key is. If a
   label becomes hot enough to matter, promote it to a column rather than adding an index.
 - `Delta` on the timestamp and `Gorilla` on the value are doing most of the compression. Do not

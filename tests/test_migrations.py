@@ -240,3 +240,15 @@ def test_the_resources_version_column_resolves_below_a_second():
 
     assert "updated_at  DateTime64(3, 'UTC') DEFAULT now64(3)" in schema
     assert "ReplacingMergeTree(updated_at)" in schema
+
+
+def test_log_stats_follow_the_logs_table_and_are_filled_by_a_view():
+    """The view watches `logs`; without it daily_log_stats would stay empty."""
+    names = [path.name for path in migrations.get_migrations()]
+
+    assert names.index("004_log_stats.sql") == names.index("003_logs.sql") + 1
+    sql = (migrations.DIRECTORY / "004_log_stats.sql").read_text()
+
+    assert "CREATE TABLE IF NOT EXISTS datum.daily_log_stats" in sql
+    assert "CREATE MATERIALIZED VIEW IF NOT EXISTS datum.mv_daily_log_stats" in sql
+    assert "FROM datum.logs" in sql

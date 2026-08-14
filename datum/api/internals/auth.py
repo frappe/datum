@@ -108,9 +108,17 @@ class TokenVerifier:
 
     def _decode(self, token: str) -> dict:
         if not self.oidc_issuer:
-            return jwt.decode(token, self.public_key, algorithms=ALGORITHMS)
+            return jwt.decode(
+                token, self.public_key, algorithms=ALGORITHMS, options={"verify_aud": False}
+            )
         signing_key = self._signing_key(token)
-        return jwt.decode(token, signing_key, algorithms=ALGORITHMS, issuer=self.oidc_issuer)
+        return jwt.decode(
+            token,
+            signing_key,
+            algorithms=ALGORITHMS,
+            issuer=self.oidc_issuer,
+            options={"verify_aud": False},
+        )
 
     def _signing_key(self, token: str):
         """The key the token's `kid` names, from the issuer's JWKS."""

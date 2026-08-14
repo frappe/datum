@@ -3,11 +3,11 @@ from __future__ import annotations
 import clickhouse_connect
 from clickhouse_connect.driver.exceptions import ClickHouseError, OperationalError
 
-from datum.api.internals.providers.base import MetricProvider, ProviderError, QueryRefused
+from datum.api.internals.providers.base import DatumProvider, ProviderError, QueryRefused
 from datum.config.api import DATABASE
 
 
-class ClickHouseProvider(MetricProvider):
+class ClickHouseProvider(DatumProvider):
     """Writes rows into whichever table the caller names. Nothing here reads them back."""
 
     def __init__(
@@ -34,7 +34,9 @@ class ClickHouseProvider(MetricProvider):
         """Connected on first use, so building the provider opens no socket."""
         if self._client is None:
             self._client = clickhouse_connect.get_client(
-                **self._connection, connect_timeout=self.timeout, send_receive_timeout=self.timeout
+                **self._connection,
+                connect_timeout=self.timeout,
+                send_receive_timeout=self.timeout,
             )
         return self._client
 
@@ -61,6 +63,7 @@ class ClickHouseProvider(MetricProvider):
             column_names=list(columns),
             database=self.database,
         )
+
         return len(rows)
 
     def _run(self, call, *arguments, **keywords):

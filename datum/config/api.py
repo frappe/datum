@@ -35,6 +35,7 @@ class Settings:
         host = os.environ.get("DATUM_CLICKHOUSE_HOST")
         if not host:
             raise RuntimeError("DATUM_CLICKHOUSE_HOST is not set; point it at ClickHouse.")
+
         return cls(
             host=host,
             port=int(os.environ.get("DATUM_CLICKHOUSE_PORT", cls.port)),

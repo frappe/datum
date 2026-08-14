@@ -29,24 +29,25 @@ producer moves on.
 Everything real lives under `/v1`. `/health` does not, so a future `/v2` cannot
 break a health check.
 
-| Method | Path | What it does |
-|---|---|---|
-| `POST` | `/v1/ingest` | JSON samples in, `{"accepted": n}` out |
-| `POST` | `/v1/ingest/remote` | Prometheus remote write, `204` out |
-| `POST` | `/v1/resource/add` | register a machine, or change its status |
-| `PUT` | `/v1/resource/{id}/status` | change one machine's status |
-| `DELETE` | `/v1/resource/{id}` | mark a machine terminated |
-| `GET` | `/health` | liveness |
+| Method   | Path                          | What it does                             |
+| -------- | ----------------------------- | ---------------------------------------- |
+| `POST`   | `/v1/ingest`                  | JSON samples in, `{"accepted": n}` out   |
+| `POST`   | `/v1/ingest/remote`           | Prometheus remote write, `204` out       |
+| `POST`   | `/v1/logs/ingest`             | JSON log lines in, `{"accepted": n}` out |
+| `POST`   | `/v1/resource/add`            | register a machine, or change its status |
+| `PUT`    | `/v1/resource/{id}/status`    | change one machine's status              |
+| `DELETE` | `/v1/resource/{id}`           | mark a machine terminated                |
+| `GET`    | `/health`                     | liveness                                 |
 
 Browse them at `/docs`. Raw schema at `/v1/openapi.json`.
 
-The three resource routes need an admin token. The two ingest routes need a
+The three resource routes need an admin token. The three ingest routes need a
 write token. See [Tokens](#tokens).
 
 ## The tables
 
-Three tables and one view, all created by the migrations. Datum writes to two of
-them; ClickHouse maintains the third by itself.
+Four tables and one view, all created by the migrations. Datum writes to three
+of them; ClickHouse maintains the fourth by itself.
 
 **`datum.samples`** holds every reading:
 
@@ -86,6 +87,31 @@ status is both the insert and the update. `updated_at` is what decides which row
 is newest, which is why it is millisecond precision — with whole seconds, two
 changes in the same second would tie and ClickHouse would pick either one.
 
+**`datum.logs`** holds log lines from the fleet, under the same JWT and the same
+`resource_id` tenant boundary:
+
+```sql
+CREATE TABLE datum.logs
+(
+    ts          DateTime64(3, 'UTC') CODEC(Delta, ZSTD),
+    resource_id LowCardinality(String),
+    product     LowCardinality(String),
+    service     LowCardinality(String),
+    level       LowCardinality(String),
+    source      LowCardinality(String),
+    message     String CODEC(ZSTD),
+    attributes  Map(LowCardinality(String), String)
+)
+ENGINE = MergeTree
+PARTITION BY (toYear(ts), toQuarter(ts))
+ORDER BY (resource_id, product, service, ts)
+```
+
+`product` and `service` are sort keys, not map entries, because a fleet's reads
+name them. `attributes` carries everything product-specific that no fleet-wide
+query filters on. The same row policy that scopes `datum.samples` scopes this
+table too, so a leaked read token cannot enumerate another tenant's log lines.
+
 **`datum.daily_ingestion_stats`** counts how many samples each machine sent per
 day. Datum never writes to it — `datum.mv_daily_ingestion_stats` is a
 materialized view that watches inserts into `samples` and fills it in:
@@ -120,6 +146,37 @@ GROUP BY date, resource_id ORDER BY 3 DESC;
 
 The view only sees inserts made after it exists. It does not backfill from rows
 already in `samples`.
+
+**`datum.daily_log_stats`** is the log twin of the table above: how many lines
+each machine sent per product, service and level, per day. `datum` never writes
+to it — `datum.mv_daily_log_stats` is a materialized view that watches inserts
+into `logs` and fills it in:
+
+```sql
+CREATE TABLE datum.daily_log_stats
+(
+    date         Date,
+    resource_id  String,
+    product      LowCardinality(String),
+    service      LowCardinality(String),
+    level        LowCardinality(String),
+    log_count    UInt64
+)
+ENGINE = SummingMergeTree()
+ORDER BY (date, resource_id, product, service, level);
+
+CREATE MATERIALIZED VIEW datum.mv_daily_log_stats
+TO datum.daily_log_stats AS
+SELECT toDate(ts) AS date, resource_id, product, service, level, count() AS log_count
+FROM datum.logs
+GROUP BY date, resource_id, product, service, level;
+```
+
+It exists to spot a machine whose log volume shifts — an `error` spike reads at
+a glance, where `daily_ingestion_stats` can only hear the overall count. The
+same rules apply as its metric twin: read with `sum(log_count)` and a `GROUP BY`
+rather than one row per day, and it only counts lines inserted after the view
+existed.
 
 There is no TTL. Nothing expires on its own.
 
@@ -168,6 +225,8 @@ They live in `datum/migrations/` as plain `.sql` files, run in filename order:
 | `000_acl.sql` | creates the `datum` and `insights` users and grants them |
 | `001_init_schema.sql` | creates the database, `samples` and `resources` |
 | `002_ingestion_stats.sql` | `daily_ingestion_stats` and the view that fills it |
+| `003_logs.sql` | the `logs` table |
+| `004_log_stats.sql` | `daily_log_stats` and the view that fills it |
 
 Everything is `IF NOT EXISTS`, so running it twice changes nothing.
 
@@ -247,6 +306,31 @@ The same 10,000 sample cap applies, counted across every series in the request.
 Over it the answer is `413` and nothing is stored. An agent will retry the same
 oversized batch, so lower its `max_samples_per_send` rather than waiting for it
 to drain.
+
+### Logs
+
+Point a log shipper (Fluent Bit, Vector, the OTel collector) at `/v1/logs/ingest`
+with the same `Authorization: Bearer <jwt>` header:
+
+```bash
+curl -X POST http://localhost:8000/v1/logs/ingest \
+  -H "Authorization: Bearer $JWT" \
+  -H "Content-Type: application/json" \
+  -d '{"lines": [
+        {"ts": "2026-08-05T10:00:00Z",
+         "product": "pilot",
+         "service": "worker",
+         "level": "info",
+         "source": "worker_pool.log",
+         "message": "job done",
+         "attributes": {"queue": "default"}}]}'
+```
+
+Up to 10,000 lines per batch. `product`, `service`, `level` and `source` must
+match `^[a-zA-Z0-9_./-]{1,200}$`; attribute names must match
+`^[a-zA-Z_][a-zA-Z0-9_]*$`; one message may be up to 8 KiB. There is no
+`resource_id` field — a smuggled one inside `attributes` is dropped, exactly
+as on the metrics path.
 
 ## Managing resources
 
@@ -384,8 +468,8 @@ Read by both `datum-migrate` and the service.
 | `DATUM_JWT_PUBLIC_KEY_FILE` | none | the PEM file to check tokens against |
 | `DATUM_OIDC_ISSUER` | none | fetch keys from an issuer instead. With neither, every call is a 401 |
 
-The database is always `datum` and the tables are always `samples` and
-`resources`. They are not configurable: the migrations name them too, and two
+The database is always `datum` and the tables are always `samples`, `resources`
+and `logs`. They are not configurable: the migrations name them too, and two
 sources of truth would drift.
 
 ## Running it locally

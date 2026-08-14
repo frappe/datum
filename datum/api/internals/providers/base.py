@@ -11,7 +11,7 @@ class QueryRefused(ProviderError):
     """The store rejected the write. The caller's fault, not the store's."""
 
 
-class MetricProvider(ABC):
+class DatumProvider(ABC):
     """What the service needs from a storage engine, and nothing more.
 
     Subclass it, then point `app.py` at it. One that forgets a method fails at

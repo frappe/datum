@@ -25,3 +25,16 @@ RATE_PERIOD = 60.0
 # Seconds to connect or execute. Applied by ClickHouse rather than here, and
 # overridable per deployment.
 TIMEOUT = 30.0
+
+# Log lines in one write. Higher than the metric batch cap because a Fluent Bit
+# flush packs many lines, but bounded so one oversized flush cannot stream
+# indefinitely into ClickHouse.
+MAX_LOG_BATCH = 10_000
+
+# Keys in one log line's `attributes` map. Same reasoning as `MAX_LABELS`: the
+# wire format does not bound it, real producers carry a handful.
+MAX_LOG_ATTRIBUTES = 64
+
+# Characters in one log message. Reached after the body is parsed, so it bounds
+# what ClickHouse is asked to store, not what datum holds.
+MAX_LOG_MESSAGE = 8 * 1024
