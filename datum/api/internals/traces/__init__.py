@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from base64 import b64encode
+
 import cramjam
 
 from datum.api.internals.traces.traces_pb2 import ExportTraceServiceRequest
@@ -81,11 +84,32 @@ def _attributes(pairs) -> dict[str, str]:
 
 
 def _value(value) -> str:
-    for field, _ in value.ListFields():
-        if field.name == "bool_value":
-            return "true" if value.bool_value else "false"
-        return str(getattr(value, field.name))
-    return ""
+    """Arrays and kvlists become JSON rather than being dropped."""
+    plain = _plain(value)
+    if plain is None:
+        return ""
+    if isinstance(plain, str):
+        return plain
+    if isinstance(plain, bool):
+        return "true" if plain else "false"
+    if isinstance(plain, (int, float)):
+        return str(plain)
+    return json.dumps(plain, separators=(",", ":"))
+
+
+def _plain(value):
+    """One OTel value as a Python object, however deeply it nests."""
+    fields = value.ListFields()
+    if not fields:
+        return None
+    name = fields[0][0].name
+    if name == "array_value":
+        return [_plain(item) for item in value.array_value.values]
+    if name == "kvlist_value":
+        return {pair.key: _plain(pair.value) for pair in value.kvlist_value.values}
+    if name == "bytes_value":
+        return b64encode(value.bytes_value).decode()
+    return getattr(value, name)
 
 
 def _parse(payload: bytes) -> ExportTraceServiceRequest:

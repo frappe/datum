@@ -91,6 +91,49 @@ def test_span_attributes_carry_every_value_kind():
     }
 
 
+def test_complex_attribute_values_are_kept_as_json():
+    """An exporter sending an array or a kvlist is sending a valid attribute.
+    Storing an empty string for it loses data and still answers success."""
+    request = ExportTraceServiceRequest()
+    scope = request.resource_spans.add().scope_spans.add()
+    one = scope.spans.add(**span())
+    stop = one.attributes.add(key="stop_sequences").value.array_value
+    stop.values.add().string_value = "</s>"
+    stop.values.add().int_value = 13
+    sampling = one.attributes.add(key="sampling").value.kvlist_value
+    sampling.values.add(key="top_p").value.double_value = 0.95
+    one.attributes.add(key="digest").value.bytes_value = b"\x00\x01\x02"
+
+    attributes = decode(request.SerializeToString(), RESOURCE)[0]["attributes"]
+
+    assert attributes["stop_sequences"] == '["</s>",13]'
+    assert attributes["sampling"] == '{"top_p":0.95}'
+    assert attributes["digest"] == "AAEC"
+
+
+def test_a_nested_array_keeps_its_shape():
+    request = ExportTraceServiceRequest()
+    scope = request.resource_spans.add().scope_spans.add()
+    one = scope.spans.add(**span())
+    outer = one.attributes.add(key="matrix").value.array_value
+    inner = outer.values.add().array_value
+    inner.values.add().int_value = 1
+    inner.values.add().int_value = 2
+
+    attributes = decode(request.SerializeToString(), RESOURCE)[0]["attributes"]
+
+    assert attributes["matrix"] == "[[1,2]]"
+
+
+def test_an_empty_array_is_not_a_missing_value():
+    request = ExportTraceServiceRequest()
+    scope = request.resource_spans.add().scope_spans.add()
+    one = scope.spans.add(**span())
+    one.attributes.add(key="empty").value.array_value.SetInParent()
+
+    assert decode(request.SerializeToString(), RESOURCE)[0]["attributes"]["empty"] == "[]"
+
+
 def test_the_status_is_named_not_numbered():
     one = span()
     request = ExportTraceServiceRequest()
