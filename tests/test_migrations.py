@@ -252,3 +252,17 @@ def test_log_stats_follow_the_logs_table_and_are_filled_by_a_view():
     assert "CREATE TABLE IF NOT EXISTS datum.daily_log_stats" in sql
     assert "CREATE MATERIALIZED VIEW IF NOT EXISTS datum.mv_daily_log_stats" in sql
     assert "FROM datum.logs" in sql
+
+
+def test_traces_are_stamped_and_expire():
+    """A span is per request, so it carries the tenant boundary and a TTL that
+    nothing else in datum has."""
+    names = [path.name for path in migrations.get_migrations()]
+
+    assert names.index("005_traces.sql") == names.index("004_log_stats.sql") + 1
+    sql = (migrations.DIRECTORY / "005_traces.sql").read_text()
+
+    assert "CREATE TABLE IF NOT EXISTS datum.traces" in sql
+    assert "ORDER BY (resource_id, service, ts)" in sql
+    assert "TTL toDateTime(ts) + toIntervalDay(7)" in sql
+    assert "INDEX idx_trace_id trace_id TYPE bloom_filter" in sql

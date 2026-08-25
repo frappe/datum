@@ -1,3 +1,5 @@
+import tracemalloc
+
 import cramjam
 import pytest
 
@@ -9,6 +11,7 @@ from datum.api.internals.remote import (
     decode,
 )
 from datum.api.internals.remote.remote_write_pb2 import WriteRequest
+from datum.api.internals.traces import decode as decode_traces
 from datum.config import MAX_BATCH, MAX_DECOMPRESSED, MAX_LABELS
 
 RESOURCE = "acme"
@@ -27,6 +30,32 @@ def test_the_bomb_is_never_allocated_to_answer_it(client, provider):
 
     assert client.post("/v1/ingest/remote", content=bomb).status_code == 413
     assert provider.written == []
+
+
+def test_a_gzipped_body_that_decompresses_huge_is_refused(provider):
+    """The traces path shares the cap; gzip declares no length, so it is checked
+    on what came out rather than on what was claimed."""
+    bomb = bytes(cramjam.gzip.compress(b"\0" * (MAX_DECOMPRESSED + 1)))
+
+    with pytest.raises(BodyTooLarge, match=str(MAX_DECOMPRESSED)):
+        decode_traces(bomb, RESOURCE)
+
+
+def test_a_gzip_bomb_is_refused_without_being_allocated(provider):
+    """Snappy declares its length before it is allocated against; gzip declares
+    none, so the cap has to bound the decompression rather than check it after."""
+    expands_to = MAX_DECOMPRESSED * 4
+    bomb = bytes(cramjam.gzip.compress(b"\0" * expands_to))
+
+    tracemalloc.start()
+    try:
+        with pytest.raises(BodyTooLarge):
+            decode_traces(bomb, RESOURCE)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+
+    assert peak < MAX_DECOMPRESSED * 3, f"materialised {peak} bytes to refuse {expands_to}"
 
 
 def series(count, samples=0):

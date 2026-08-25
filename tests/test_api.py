@@ -29,6 +29,7 @@ def test_the_published_routes(client):
         "/v1/resource/add",
         "/v1/resource/{resource_id}",
         "/v1/resource/{resource_id}/status",
+        "/v1/traces",
     ]
 
 

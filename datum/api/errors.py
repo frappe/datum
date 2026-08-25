@@ -9,12 +9,18 @@ from fastapi.responses import JSONResponse
 
 from datum.api.internals import ProviderError, QueryRefused
 from datum.api.internals.remote import (
-    BodyTooLarge,
     RemoteWriteError,
     TooManyLabels,
     TooManySamples,
     TooManySeries,
 )
+from datum.api.internals.traces import (
+    AttributeTooLarge,
+    TooManyAttributes,
+    TooManySpans,
+    TraceError,
+)
+from datum.api.internals.wire import BodyTooLarge
 
 UNPROCESSABLE = 422
 
@@ -28,6 +34,10 @@ STATUS = {
     TooManySeries: 413,
     TooManyLabels: 413,
     RemoteWriteError: 400,
+    TooManySpans: 413,
+    TooManyAttributes: 413,
+    AttributeTooLarge: 413,
+    TraceError: 400,
     NotImplementedError: 501,
     ProviderError: 503,
 }
