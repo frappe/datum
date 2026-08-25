@@ -23,6 +23,11 @@ MAX_SPANS = 10_000
 # Attributes on one span. OTel bounds neither these nor a body's span count.
 MAX_SPAN_ATTRIBUTES = 64
 
+# Bytes of attributes one resource may carry, all of them together. Unlike a
+# span's, these are copied onto every span the resource holds, so this bound is
+# multiplied by MAX_SPANS in what actually gets written.
+MAX_RESOURCE_ATTRIBUTES = 8 * 1024
+
 # Bytes one attribute may occupy on the wire, key and value together. An array
 # or kvlist renders to about the same size as it arrived, so this bounds what
 # lands in a Map cell, which is read whole whenever the column is touched.

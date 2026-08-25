@@ -17,6 +17,7 @@ from datum.api.internals.wire import (
 from datum.config.limits import (
     MAX_ATTRIBUTE,
     MAX_DECOMPRESSED,
+    MAX_RESOURCE_ATTRIBUTES,
     MAX_SPAN_ATTRIBUTES,
     MAX_SPANS,
 )
@@ -148,12 +149,20 @@ def _decompressed(body: bytes) -> bytes:
         if len(body) > MAX_DECOMPRESSED:
             raise BodyTooLarge(f"body exceeds the cap of {MAX_DECOMPRESSED} bytes")
         return body
+    stream = zlib.decompressobj(GZIP_WBITS)
     try:
-        payload = zlib.decompressobj(GZIP_WBITS).decompress(body, MAX_DECOMPRESSED + 1)
+        payload = stream.decompress(body, MAX_DECOMPRESSED + 1)
     except UNREADABLE as unreadable:
         raise TraceError(f"body is not gzip: {unreadable}") from unreadable
+
     if len(payload) > MAX_DECOMPRESSED:
         raise BodyTooLarge(f"body decompresses past the cap of {MAX_DECOMPRESSED} bytes")
+    # Without this a truncated upload decodes to whatever arrived, and answering
+    # 200 tells the collector to move on: the missing spans are never resent.
+    if not stream.eof:
+        raise TraceError("body is a truncated gzip stream")
+    if stream.unused_data:
+        raise TraceError("body carries data after its gzip stream")
     return payload
 
 
@@ -182,16 +191,24 @@ def _scan_resource(payload: bytes, position: int, end: int) -> int:
 
 
 def _scan_resource_attributes(payload: bytes, position: int, end: int) -> None:
+    """`resource` is a singular field, so protobuf merges repeats of it rather
+    than replacing, and the attribute lists inside concatenate. The caps are on
+    that merged total: checking each occurrence alone lets N of them through."""
+    attributes = total = 0
     while position < end:
         tag, position = read_varint(payload, position)
         if (tag >> 3) != RESOURCE_FIELD or (tag & 7) != LENGTH_DELIMITED:
             position = skip(payload, position, tag & 7)
             continue
         length, position = read_varint(payload, position)
-        _attributes_within(
-            payload, position, position + length, RESOURCE_ATTRIBUTE_FIELD, "a resource"
+        found, bytes_used = _attributes_within(
+            payload, position, position + length, RESOURCE_ATTRIBUTE_FIELD
         )
+        attributes += found
+        total += bytes_used
         position += length
+
+    _refuse_over(attributes, total, "a resource", MAX_RESOURCE_ATTRIBUTES)
 
 
 def _scan_scope(payload: bytes, position: int, end: int) -> int:
@@ -200,36 +217,41 @@ def _scan_scope(payload: bytes, position: int, end: int) -> int:
 
 def _scan_span(payload: bytes, position: int, end: int) -> int:
     """One span. Nothing bounds its attributes, so MAX_SPAN_ATTRIBUTES does."""
-    _attributes_within(payload, position, end, ATTRIBUTE_FIELD, "a span")
+    attributes, total = _attributes_within(payload, position, end, ATTRIBUTE_FIELD)
+    _refuse_over(attributes, total, "a span", None)
     return 1
 
 
-def _attributes_within(payload: bytes, position: int, end: int, field: int, subject: str) -> int:
-    """Attributes of one message, each refused if the wire says it is too wide."""
-    attributes = 0
+def _attributes_within(payload: bytes, position: int, end: int, field: int) -> tuple[int, int]:
+    """How many attributes one message carries and how many bytes they occupy.
+    Only the per-attribute width is refused here; the totals are the caller's,
+    which may be summing across more than one occurrence."""
+    attributes = total = 0
     while position < end:
         tag, position = read_varint(payload, position)
-        if (tag >> 3) == field and (tag & 7) == LENGTH_DELIMITED:
-            attributes += 1
-            position = _measured(payload, position)
+        if (tag >> 3) != field or (tag & 7) != LENGTH_DELIMITED:
+            position = skip(payload, position, tag & 7)
             continue
-        position = skip(payload, position, tag & 7)
+        length, position = read_varint(payload, position)
+        if length > MAX_ATTRIBUTE:
+            raise AttributeTooLarge(
+                f"an attribute occupies {length} bytes, but {MAX_ATTRIBUTE} is the cap"
+            )
+        attributes += 1
+        total += length
+        position += length
+    return attributes, total
 
+
+def _refuse_over(attributes: int, total: int, subject: str, budget: int | None) -> None:
     if attributes > MAX_SPAN_ATTRIBUTES:
         raise TooManyAttributes(
             f"{subject} carries {attributes} attributes, but {MAX_SPAN_ATTRIBUTES} is the cap"
         )
-    return attributes
-
-
-def _measured(payload: bytes, position: int) -> int:
-    """Past one attribute, refusing it if the wire says it is too wide."""
-    length, position = read_varint(payload, position)
-    if length > MAX_ATTRIBUTE:
+    if budget is not None and total > budget:
         raise AttributeTooLarge(
-            f"an attribute occupies {length} bytes, but {MAX_ATTRIBUTE} is the cap"
+            f"{subject} carries {total} bytes of attributes, but {budget} is the cap"
         )
-    return position + length
 
 
 def _count(payload: bytes, position: int, end: int, field: int, inner) -> int:

@@ -8,8 +8,17 @@ from datum.api.internals.traces import (
     TraceError,
     decode,
 )
-from datum.api.internals.traces.traces_pb2 import ExportTraceServiceRequest
-from datum.config import MAX_ATTRIBUTE, MAX_SPAN_ATTRIBUTES, MAX_SPANS
+from datum.api.internals.traces.traces_pb2 import (
+    ExportTraceServiceRequest,
+    Resource,
+    ScopeSpans,
+)
+from datum.config import (
+    MAX_ATTRIBUTE,
+    MAX_RESOURCE_ATTRIBUTES,
+    MAX_SPAN_ATTRIBUTES,
+    MAX_SPANS,
+)
 
 PATH = "/v1/traces"
 RESOURCE = "acme"
@@ -31,6 +40,10 @@ def exported(*resources, gzip=False) -> bytes:
             scope.spans.add(**span)
     body = request.SerializeToString()
     return bytes(cramjam.gzip.compress(body)) if gzip else body
+
+
+def _gzipped(*resources) -> bytes:
+    return bytes(cramjam.gzip.compress(exported(*resources)))
 
 
 def span(**overrides) -> dict:
@@ -266,6 +279,73 @@ def test_a_row_is_capped_on_both_maps_merged():
 
     with pytest.raises(TooManyAttributes, match="merged"):
         decode(request.SerializeToString(), RESOURCE)
+
+
+def test_a_truncated_gzip_stream_is_refused():
+    """A partial upload that decodes to fewer spans must not answer success: a
+    collector treats 2xx as delivered and never sends them again."""
+    whole = _gzipped(({"service.name": "vllm"}, [span(), span(), span()]))
+
+    for cut in range(20, len(whole)):
+        with pytest.raises(TraceError):
+            decode(whole[:cut], RESOURCE)
+
+
+def test_data_after_the_gzip_stream_is_refused():
+    whole = _gzipped(({"service.name": "vllm"}, [span()]))
+
+    with pytest.raises(TraceError, match="after its gzip stream"):
+        decode(whole + b"junk", RESOURCE)
+
+
+def test_a_resource_carrying_too_many_attribute_bytes_is_refused():
+    """Each attribute can pass its own width cap while the resource as a whole
+    is copied onto every span, so the total is what multiplies."""
+    request = ExportTraceServiceRequest()
+    resource_spans = request.resource_spans.add()
+    for index in range(4):
+        resource_spans.resource.attributes.add(key=f"pad_{index}").value.string_value = "v" * (
+            MAX_RESOURCE_ATTRIBUTES // 2
+        )
+    resource_spans.scope_spans.add().spans.add(**span())
+
+    with pytest.raises(AttributeTooLarge, match="bytes of attributes"):
+        decode(request.SerializeToString(), RESOURCE)
+
+
+def _varint(value: int) -> bytes:
+    out = b""
+    while True:
+        part = value & 0x7F
+        value >>= 7
+        out += bytes([part | (0x80 if value else 0)])
+        if not value:
+            return out
+
+
+def _field(number: int, payload: bytes) -> bytes:
+    return _varint((number << 3) | 2) + _varint(len(payload)) + payload
+
+
+def test_repeated_resource_fields_are_capped_once_merged():
+    """`resource` is singular, so protobuf merges repeats of it and the attribute
+    lists concatenate. Each occurrence can pass every cap and the merge not."""
+    occurrences = 8
+    chunks = []
+    for occurrence in range(occurrences):
+        resource = Resource()
+        for index in range(MAX_SPAN_ATTRIBUTES // occurrences):
+            resource.attributes.add(key=f"o{occurrence}_k{index}").value.string_value = "v" * 900
+        raw = resource.SerializeToString()
+        assert len(raw) < MAX_RESOURCE_ATTRIBUTES, "each occurrence must pass on its own"
+        chunks.append(raw)
+
+    scope = ScopeSpans()
+    scope.spans.add(**span())
+    inner = b"".join(_field(1, chunk) for chunk in chunks) + _field(2, scope.SerializeToString())
+
+    with pytest.raises(AttributeTooLarge, match="bytes of attributes"):
+        decode(_field(1, inner), RESOURCE)
 
 
 def test_a_body_that_is_not_a_trace_request_is_refused():
