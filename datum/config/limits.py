@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-# Bytes after snappy, remote write only. Snappy runs to roughly 20:1 on
-# protobuf, so the body size nginx allows does not bound what one costs open.
+# Bytes a compressed body may become, on either protobuf path. Snappy runs to
+# roughly 20:1, so the body size nginx allows does not bound what one costs
+# open. Remote write checks it against snappy's declared length; gzip declares
+# none, so traces check what came out.
 MAX_DECOMPRESSED = 12 * 1024 * 1024
 
 # Readings in one write, both paths. Remote write counts them off the wire
@@ -13,6 +15,13 @@ MAX_BATCH = 10_000
 # carrying a million costs a fraction of a megabyte to send. Real producers use
 # a handful: node_exporter's widest is well under twenty.
 MAX_LABELS = 64
+
+# Spans in one OTLP request, counted off the wire before protobuf builds them.
+# A collector's send_batch_size must not exceed this or its exports are refused.
+MAX_SPANS = 10_000
+
+# Attributes on one span. OTel bounds neither these nor a body's span count.
+MAX_SPAN_ATTRIBUTES = 64
 
 # Characters in a resource_id. Not a metric name, so the NAME rule does not apply.
 MAX_RESOURCE_ID = 200

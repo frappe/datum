@@ -8,6 +8,8 @@ from datum.config.limits import (
     MAX_LOG_MESSAGE,
     MAX_REQUESTS,
     MAX_RESOURCE_ID,
+    MAX_SPAN_ATTRIBUTES,
+    MAX_SPANS,
     RATE_PERIOD,
 )
 
@@ -20,6 +22,8 @@ __all__ = [
     "MAX_LOG_MESSAGE",
     "MAX_REQUESTS",
     "MAX_RESOURCE_ID",
+    "MAX_SPANS",
+    "MAX_SPAN_ATTRIBUTES",
     "RATE_PERIOD",
     "Settings",
 ]

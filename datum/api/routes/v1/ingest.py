@@ -5,8 +5,9 @@ from typing import Annotated
 from fastapi import APIRouter, Body, Header, HTTPException, Response, status
 
 from datum.api.dependencies import Provider, Writer, rate_limit
-from datum.api.internals.remote import CONTENT_TYPE, decode, is_version_two
+from datum.api.internals.remote import decode, is_version_two
 from datum.api.internals.schemas import IngestResponse, Sample, SamplesRequest
+from datum.api.internals.wire import CONTENT_TYPE
 
 router = APIRouter(tags=["ingest"])
 

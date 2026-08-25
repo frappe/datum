@@ -5,28 +5,25 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 import cramjam
-from google.protobuf.internal.decoder import _DecodeVarint
-from google.protobuf.message import DecodeError
 
 from datum.api.internals.remote.remote_write_pb2 import WriteRequest
 from datum.api.internals.schemas import NAME
+from datum.api.internals.wire import (
+    LENGTH_DELIMITED,
+    UNREADABLE,
+    BodyTooLarge,
+    read_varint,
+    skip,
+)
 from datum.config.limits import MAX_BATCH, MAX_DECOMPRESSED, MAX_LABELS
 
 NAME_LABEL = "__name__"
 # A v2 request interns its strings, so decoding it as v1 yields labels that are not there.
-CONTENT_TYPE = "application/x-protobuf"
 V2 = "io.prometheus.write.v2.request"
-
-UNREADABLE = (DecodeError, cramjam.DecompressionError, ValueError, OSError, IndexError)
 
 SERIES_FIELD = 1
 LABEL_FIELD = 1
 SAMPLE_FIELD = 2
-
-VARINT = 0
-FIXED_64 = 1
-LENGTH_DELIMITED = 2
-FIXED_32 = 5
 
 
 class RemoteWriteError(ValueError):
@@ -35,10 +32,6 @@ class RemoteWriteError(ValueError):
 
 class TooManySamples(RemoteWriteError):
     """More samples than one batch holds. Told apart so it answers 413."""
-
-
-class BodyTooLarge(RemoteWriteError):
-    """Decompresses past what a batch could hold. Also a 413."""
 
 
 class TooManySeries(RemoteWriteError):
@@ -147,11 +140,11 @@ def _scan(payload: bytes) -> tuple[int, int]:
     series = samples = 0
     try:
         while position < len(payload) and series <= MAX_BATCH and samples <= MAX_BATCH:
-            tag, position = _DecodeVarint(payload, position)
+            tag, position = read_varint(payload, position)
             if (tag >> 3) != SERIES_FIELD or (tag & 7) != LENGTH_DELIMITED:
-                position = _skip(payload, position, tag & 7)
+                position = skip(payload, position, tag & 7)
                 continue
-            length, position = _DecodeVarint(payload, position)
+            length, position = read_varint(payload, position)
             series += 1
             samples += _scan_series(payload, position, position + length)
             position += length
@@ -166,28 +159,14 @@ def _scan_series(payload: bytes, position: int, end: int) -> int:
     """Readings in one series. Nothing bounds its labels, so MAX_LABELS does."""
     labels = samples = 0
     while position < end:
-        tag, position = _DecodeVarint(payload, position)
+        tag, position = read_varint(payload, position)
         labels += (tag >> 3) == LABEL_FIELD
         samples += (tag >> 3) == SAMPLE_FIELD
-        position = _skip(payload, position, tag & 7)
+        position = skip(payload, position, tag & 7)
 
     if labels > MAX_LABELS:
         raise TooManyLabels(f"a series carries {labels} labels, but {MAX_LABELS} is the cap")
     return samples
-
-
-def _skip(payload: bytes, position: int, wire_type: int) -> int:
-    """Past one field's value, without decoding it."""
-    if wire_type == LENGTH_DELIMITED:
-        length, position = _DecodeVarint(payload, position)
-        return position + length
-    if wire_type == VARINT:
-        return _DecodeVarint(payload, position)[1]
-    if wire_type == FIXED_64:
-        return position + 8
-    if wire_type == FIXED_32:
-        return position + 4
-    raise RemoteWriteError(f"unknown protobuf wire type {wire_type}")
 
 
 def _declared_length(body: bytes) -> int:

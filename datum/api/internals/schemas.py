@@ -26,10 +26,7 @@ class Sample(BaseModel):
     metric: str = Field(pattern=NAME.pattern, max_length=200)
     value: float
     ts: datetime
-    labels: dict[str, str] = Field(
-        default_factory=dict,
-        max_length=MAX_LABELS,
-    )
+    labels: dict[str, str] = Field(default_factory=dict, max_length=MAX_LABELS)
 
     @field_validator("labels")
     @classmethod
