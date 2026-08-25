@@ -1,7 +1,13 @@
 import cramjam
 import pytest
 
-from datum.api.internals.traces import AttributeTooLarge, TooManySpans, TraceError, decode
+from datum.api.internals.traces import (
+    AttributeTooLarge,
+    TooManyAttributes,
+    TooManySpans,
+    TraceError,
+    decode,
+)
 from datum.api.internals.traces.traces_pb2 import ExportTraceServiceRequest
 from datum.config import MAX_ATTRIBUTE, MAX_SPAN_ATTRIBUTES, MAX_SPANS
 
@@ -221,6 +227,44 @@ def test_nesting_deeper_than_protobuf_allows_is_a_400_not_a_500():
     value.string_value = "bottom"
 
     with pytest.raises(TraceError):
+        decode(request.SerializeToString(), RESOURCE)
+
+
+def test_a_resource_carrying_too_many_attributes_is_refused():
+    """Resource attributes are copied onto every span the resource holds, so one
+    request could store them thousands of times over."""
+    request = ExportTraceServiceRequest()
+    resource_spans = request.resource_spans.add()
+    for index in range(MAX_SPAN_ATTRIBUTES + 1):
+        resource_spans.resource.attributes.add(key=f"pad_{index}").value.string_value = "v"
+    resource_spans.scope_spans.add().spans.add(**span())
+
+    with pytest.raises(TooManyAttributes, match="a resource"):
+        decode(request.SerializeToString(), RESOURCE)
+
+
+def test_a_huge_resource_attribute_is_refused():
+    request = ExportTraceServiceRequest()
+    resource_spans = request.resource_spans.add()
+    resource_spans.resource.attributes.add(key="huge").value.string_value = "v" * MAX_ATTRIBUTE
+    resource_spans.scope_spans.add().spans.add(**span())
+
+    with pytest.raises(AttributeTooLarge):
+        decode(request.SerializeToString(), RESOURCE)
+
+
+def test_a_row_is_capped_on_both_maps_merged():
+    """Each map can pass its own cap and still exceed it once merged, and the
+    merged map is what a row stores."""
+    request = ExportTraceServiceRequest()
+    resource_spans = request.resource_spans.add()
+    for index in range(MAX_SPAN_ATTRIBUTES - 10):
+        resource_spans.resource.attributes.add(key=f"r_{index}").value.string_value = "v"
+    one = resource_spans.scope_spans.add().spans.add(**span())
+    for index in range(MAX_SPAN_ATTRIBUTES - 10):
+        one.attributes.add(key=f"s_{index}").value.string_value = "v"
+
+    with pytest.raises(TooManyAttributes, match="merged"):
         decode(request.SerializeToString(), RESOURCE)
 
 

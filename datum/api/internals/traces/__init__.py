@@ -27,9 +27,11 @@ KINDS = ("UNSPECIFIED", "INTERNAL", "SERVER", "CLIENT", "PRODUCER", "CONSUMER")
 STATUSES = ("UNSET", "OK", "ERROR")
 
 RESOURCE_SPANS_FIELD = 1
+RESOURCE_FIELD = 1
 SCOPE_SPANS_FIELD = 2
 SPAN_FIELD = 2
 ATTRIBUTE_FIELD = 9
+RESOURCE_ATTRIBUTE_FIELD = 1
 
 GZIP_MAGIC = b"\x1f\x8b"
 # Gzip rather than raw deflate.
@@ -68,6 +70,13 @@ def decode(body: bytes, resource_id: str) -> list[dict]:
 
 
 def _row(span, resource_id: str, service: str, resource_attributes: dict) -> dict:
+    attributes = {**resource_attributes, **_attributes(span.attributes)}
+    # Each cap holds on its own, but the row carries both maps merged.
+    if len(attributes) > MAX_SPAN_ATTRIBUTES:
+        raise TooManyAttributes(
+            f"a span would carry {len(attributes)} attributes once its resource's are "
+            f"merged in, but {MAX_SPAN_ATTRIBUTES} is the cap"
+        )
     return {
         "ts": span.start_time_unix_nano,
         "resource_id": resource_id,
@@ -80,7 +89,7 @@ def _row(span, resource_id: str, service: str, resource_attributes: dict) -> dic
         "duration_ns": max(span.end_time_unix_nano - span.start_time_unix_nano, 0),
         "status_code": _named(STATUSES, span.status.code),
         "status_message": span.status.message,
-        "attributes": {**resource_attributes, **_attributes(span.attributes)},
+        "attributes": attributes,
     }
 
 
@@ -166,7 +175,23 @@ def _scan(payload: bytes) -> int:
 
 
 def _scan_resource(payload: bytes, position: int, end: int) -> int:
+    """A resource's attributes ride on every span it holds, so they meet the same
+    caps as a span's own before anything is built."""
+    _scan_resource_attributes(payload, position, end)
     return _count(payload, position, end, SCOPE_SPANS_FIELD, _scan_scope)
+
+
+def _scan_resource_attributes(payload: bytes, position: int, end: int) -> None:
+    while position < end:
+        tag, position = read_varint(payload, position)
+        if (tag >> 3) != RESOURCE_FIELD or (tag & 7) != LENGTH_DELIMITED:
+            position = skip(payload, position, tag & 7)
+            continue
+        length, position = read_varint(payload, position)
+        _attributes_within(
+            payload, position, position + length, RESOURCE_ATTRIBUTE_FIELD, "a resource"
+        )
+        position += length
 
 
 def _scan_scope(payload: bytes, position: int, end: int) -> int:
@@ -175,10 +200,16 @@ def _scan_scope(payload: bytes, position: int, end: int) -> int:
 
 def _scan_span(payload: bytes, position: int, end: int) -> int:
     """One span. Nothing bounds its attributes, so MAX_SPAN_ATTRIBUTES does."""
+    _attributes_within(payload, position, end, ATTRIBUTE_FIELD, "a span")
+    return 1
+
+
+def _attributes_within(payload: bytes, position: int, end: int, field: int, subject: str) -> int:
+    """Attributes of one message, each refused if the wire says it is too wide."""
     attributes = 0
     while position < end:
         tag, position = read_varint(payload, position)
-        if (tag >> 3) == ATTRIBUTE_FIELD and (tag & 7) == LENGTH_DELIMITED:
+        if (tag >> 3) == field and (tag & 7) == LENGTH_DELIMITED:
             attributes += 1
             position = _measured(payload, position)
             continue
@@ -186,9 +217,9 @@ def _scan_span(payload: bytes, position: int, end: int) -> int:
 
     if attributes > MAX_SPAN_ATTRIBUTES:
         raise TooManyAttributes(
-            f"a span carries {attributes} attributes, but {MAX_SPAN_ATTRIBUTES} is the cap"
+            f"{subject} carries {attributes} attributes, but {MAX_SPAN_ATTRIBUTES} is the cap"
         )
-    return 1
+    return attributes
 
 
 def _measured(payload: bytes, position: int) -> int:
