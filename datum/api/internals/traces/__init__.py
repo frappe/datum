@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import json
+import zlib
 from base64 import b64encode
-
-import cramjam
 
 from datum.api.internals.traces.traces_pb2 import ExportTraceServiceRequest
 from datum.api.internals.wire import (
@@ -33,6 +32,8 @@ SPAN_FIELD = 2
 ATTRIBUTE_FIELD = 9
 
 GZIP_MAGIC = b"\x1f\x8b"
+# Gzip rather than raw deflate.
+GZIP_WBITS = 16 + zlib.MAX_WBITS
 
 
 class TraceError(ValueError):
@@ -131,15 +132,17 @@ def _parse(payload: bytes) -> ExportTraceServiceRequest:
 
 
 def _decompressed(body: bytes) -> bytes:
-    """Gzip declares no length, so the cap is checked on what came out."""
+    """Gzip declares no length, so the cap bounds what is allocated rather than
+    being checked once it already is. One byte past the cap is enough to refuse.
+    """
     if not body.startswith(GZIP_MAGIC):
         return body
     try:
-        payload = bytes(cramjam.gzip.decompress(body))
+        payload = zlib.decompressobj(GZIP_WBITS).decompress(body, MAX_DECOMPRESSED + 1)
     except UNREADABLE as unreadable:
         raise TraceError(f"body is not gzip: {unreadable}") from unreadable
     if len(payload) > MAX_DECOMPRESSED:
-        raise BodyTooLarge(f"{len(payload)} bytes decompressed, but the cap is {MAX_DECOMPRESSED}")
+        raise BodyTooLarge(f"body decompresses past the cap of {MAX_DECOMPRESSED} bytes")
     return payload
 
 

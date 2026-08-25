@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import zlib
+
 import cramjam
 from google.protobuf.internal.decoder import _DecodeVarint
 from google.protobuf.message import DecodeError
@@ -9,7 +11,14 @@ from google.protobuf.message import DecodeError
 CONTENT_TYPE = "application/x-protobuf"
 
 # What a body being unreadable looks like, whichever format it claimed to be.
-UNREADABLE = (DecodeError, cramjam.DecompressionError, ValueError, OSError, IndexError)
+UNREADABLE = (
+    DecodeError,
+    cramjam.DecompressionError,
+    zlib.error,
+    ValueError,
+    OSError,
+    IndexError,
+)
 
 VARINT = 0
 FIXED_64 = 1

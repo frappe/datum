@@ -1,3 +1,5 @@
+import tracemalloc
+
 import cramjam
 import pytest
 
@@ -37,6 +39,23 @@ def test_a_gzipped_body_that_decompresses_huge_is_refused(provider):
 
     with pytest.raises(BodyTooLarge, match=str(MAX_DECOMPRESSED)):
         decode_traces(bomb, RESOURCE)
+
+
+def test_a_gzip_bomb_is_refused_without_being_allocated(provider):
+    """Snappy declares its length before it is allocated against; gzip declares
+    none, so the cap has to bound the decompression rather than check it after."""
+    expands_to = MAX_DECOMPRESSED * 4
+    bomb = bytes(cramjam.gzip.compress(b"\0" * expands_to))
+
+    tracemalloc.start()
+    try:
+        with pytest.raises(BodyTooLarge):
+            decode_traces(bomb, RESOURCE)
+        peak = tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+
+    assert peak < MAX_DECOMPRESSED * 3, f"materialised {peak} bytes to refuse {expands_to}"
 
 
 def series(count, samples=0):
