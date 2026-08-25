@@ -39,8 +39,10 @@ ClickHouse stores them. Readers get them back from ClickHouse directly — datum
 - **Who may write is the token; who may read is a ClickHouse grant.** Every row is stamped with
   the token's `resource_id`. Who may read those rows is decided when their ClickHouse user is
   created, not by anything datum runs.
-- **Numbers only.** Datum stores metrics. Slow queries, request traces, and anything with free
-  text belong somewhere else.
+- **Numbers first, but not only.** Metrics are most of what datum holds and the cheapest to
+  keep. Log lines and spans earn their own tables, shapes and retention rather than being
+  forced into `samples`. Anything new that is not a number needs the same: its own table, its
+  own caps, and a TTL if its volume scales with traffic rather than with fleet size.
 - **Insights connects to ClickHouse directly**, with its own read-only user, and so does every
   other reader. Do not build a read path through the API.
 - Keep API routes thin. Behaviour lives in modules the routes call — but do not add a layer
@@ -154,8 +156,10 @@ Insights ───────────────────────�
   label becomes hot enough to matter, promote it to a column rather than adding an index.
 - `Delta` on the timestamp and `Gorilla` on the value are doing most of the compression. Do not
   drop the codecs.
-- There is no TTL. Nothing expires on its own, so cardinality is a permanent cost, not one that
-  retention eventually clears.
+- `traces` is the only table with a TTL, at 7 days, and it drops whole parts only. Nothing
+  else expires: a sample is small and its history is the point, so cardinality there is a
+  permanent cost, not one retention eventually clears. A TTL belongs on a table whose volume
+  follows traffic rather than fleet size, which is spans and not metrics.
 - Losing ClickHouse loses in-flight data. That is accepted. There is no queue, no spool file
   and no retry, because blocking a producer's collection tick is worse than a gap in a chart.
 

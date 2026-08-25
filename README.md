@@ -1,13 +1,20 @@
 # datum
 
-Datum stores numbers about your fleet. Producers send them in. You read them back
+Datum stores telemetry about your fleet. Producers send it in. You read it back
 out of ClickHouse with SQL.
+
+It started as numbers only, and that is still most of what it holds. Answering
+"is the fleet healthy" needs metrics; answering "what happened on that machine"
+needs the log line, and "why was that request slow" needs the trace. Those cost
+more to store, so each has its own table, its own shape, and its own retention
+rather than being forced into the metrics one.
 
 ClickHouse holds everything. Datum is the write door in front of it:
 
 ```
 producers (JSON)          ──┐
-agents    (remote write)  ──┴──> datum ──> ClickHouse
+agents    (remote write)  ──┤
+collectors (OTLP traces)  ──┴──> datum ──> ClickHouse
                                              ▲
 Insights  (SQL)           ───────────────────┘  its own read-only account
 ```
@@ -34,6 +41,7 @@ break a health check.
 | `POST`   | `/v1/ingest`                  | JSON samples in, `{"accepted": n}` out   |
 | `POST`   | `/v1/ingest/remote`           | Prometheus remote write, `204` out       |
 | `POST`   | `/v1/logs/ingest`             | JSON log lines in, `{"accepted": n}` out |
+| `POST`   | `/v1/traces`                  | OTLP/HTTP spans in, empty `200` out      |
 | `POST`   | `/v1/resource/add`            | register a machine, or change its status |
 | `PUT`    | `/v1/resource/{id}/status`    | change one machine's status              |
 | `DELETE` | `/v1/resource/{id}`           | mark a machine terminated                |
@@ -41,13 +49,13 @@ break a health check.
 
 Browse them at `/docs`. Raw schema at `/v1/openapi.json`.
 
-The three resource routes need an admin token. The three ingest routes need a
+The three resource routes need an admin token. The four ingest routes need a
 write token. See [Tokens](#tokens).
 
 ## The tables
 
-Four tables and one view, all created by the migrations. Datum writes to three
-of them; ClickHouse maintains the fourth by itself.
+Six tables and two views, all created by the migrations. Datum writes to four
+of them; ClickHouse maintains the stats tables by itself.
 
 **`datum.samples`** holds every reading:
 
@@ -64,6 +72,11 @@ ENGINE = MergeTree
 PARTITION BY toYYYYMM(ts)
 ORDER BY (resource_id, metric, ts)
 ```
+
+**Samples do not expire.** A reading is a few bytes and the fleet's history is
+the point of keeping them, so cardinality is a permanent cost here: a label that
+churns is a bill that never stops. That is the trade, and it is why the client
+refuses `pid` and friends.
 
 `resource_id` is a real column rather than a key in `labels`, because it decides
 who a row belongs to, and that has to be a sort key. Every other label stays
@@ -111,6 +124,47 @@ ORDER BY (resource_id, product, service, ts)
 name them. `attributes` carries everything product-specific that no fleet-wide
 query filters on. The same row policy that scopes `datum.samples` scopes this
 table too, so a leaked read token cannot enumerate another tenant's log lines.
+
+**`datum.traces`** holds spans. One row is one span; a trace is the rows sharing
+a `trace_id`:
+
+```sql
+CREATE TABLE datum.traces
+(
+    ts             DateTime64(9, 'UTC') CODEC(Delta, ZSTD),
+    resource_id    String CODEC(ZSTD),
+    service        LowCardinality(String),
+    span_name      LowCardinality(String),
+    span_kind      LowCardinality(String),
+    trace_id       String CODEC(ZSTD),
+    span_id        String CODEC(ZSTD),
+    parent_span_id String CODEC(ZSTD),
+    duration_ns    UInt64 CODEC(T64, ZSTD),
+    status_code    LowCardinality(String),
+    status_message String CODEC(ZSTD),
+    attributes     Map(LowCardinality(String), String),
+    INDEX idx_trace_id trace_id TYPE bloom_filter(0.001) GRANULARITY 1,
+    INDEX idx_duration duration_ns TYPE minmax GRANULARITY 1
+)
+ENGINE = MergeTree
+PARTITION BY toDate(ts)
+ORDER BY (resource_id, service, ts)
+TTL toDateTime(ts) + toIntervalDay(7)
+SETTINGS ttl_only_drop_parts = 1
+```
+
+Three things differ from the other tables, all on purpose:
+
+- **Nanoseconds, not milliseconds.** A span can be shorter than a millisecond,
+  and rounding one to zero loses the thing being measured.
+- **Daily partitions.** The TTL is short, and dropping a day is a file delete.
+- **Seven days.** A span is per request, so volume scales with traffic rather
+  than with fleet size. Trace detail stops being useful long before metrics do.
+
+`trace_id` sorts last, so it prunes nothing — the bloom filter is what makes
+"fetch this one trace" cheap. `attributes` merges the span's own with its
+resource's, which is why a resource's are capped: they are copied onto every
+span the resource holds.
 
 **`datum.daily_ingestion_stats`** counts how many samples each machine sent per
 day. Datum never writes to it — `datum.mv_daily_ingestion_stats` is a
@@ -178,7 +232,16 @@ same rules apply as its metric twin: read with `sum(log_count)` and a `GROUP BY`
 rather than one row per day, and it only counts lines inserted after the view
 existed.
 
-There is no TTL. Nothing expires on its own.
+`datum.traces` is the only table that expires, after 7 days. Nothing else does.
+
+The line is what a row costs against what it is worth later. A sample is a few
+bytes and one per machine per tick, so a year of them is both affordable and the
+reason you collected them. A span is one per *request*, so its volume follows
+traffic rather than fleet size — the ClickHouse write-up measures 200 million
+spans a day from a moderate load — and nobody debugs a request from last March.
+
+`logs` sits between the two and has no TTL today. If its volume starts scaling
+with traffic rather than with machines, it will need one.
 
 ## Setting it up
 
@@ -227,6 +290,7 @@ They live in `datum/migrations/` as plain `.sql` files, run in filename order:
 | `002_ingestion_stats.sql` | `daily_ingestion_stats` and the view that fills it |
 | `003_logs.sql` | the `logs` table |
 | `004_log_stats.sql` | `daily_log_stats` and the view that fills it |
+| `005_traces.sql` | the `traces` table |
 
 Everything is `IF NOT EXISTS`, so running it twice changes nothing.
 
@@ -332,6 +396,56 @@ match `^[a-zA-Z0-9_./-]{1,200}$`; attribute names must match
 `resource_id` field — a smuggled one inside `attributes` is dropped, exactly
 as on the metrics path.
 
+### Traces
+
+Point an OTel collector at `/v1/traces`. It speaks OTLP/HTTP protobuf, gzipped
+or not, and answers an empty `200` — which is what a collector reads as
+delivered:
+
+```yaml
+exporters:
+  otlphttp:
+    endpoint: http://localhost:8000/v1/traces
+    headers:
+      Authorization: "Bearer ${DATUM_TOKEN}"
+
+processors:
+  batch:
+    send_batch_size: 5000       # must stay under MAX_SPANS
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlphttp]
+```
+
+vLLM and anything else OTel-instrumented points at the collector, not at datum.
+
+The caps that matter to a collector's config:
+
+| Cap | Value | What it bounds |
+| --- | ----- | -------------- |
+| `MAX_SPANS` | 10,000 | spans in one request |
+| `MAX_SPAN_ATTRIBUTES` | 64 | attributes on one span, and on a row once its resource's are merged in |
+| `MAX_ATTRIBUTE` | 8 KiB | one attribute, key and value together |
+| `MAX_RESOURCE_ATTRIBUTES` | 8 KiB | all of one resource's attributes together |
+| `MAX_DECOMPRESSED` | 12 MiB | what a gzipped body may become |
+
+`MAX_RESOURCE_ATTRIBUTES` is the odd one and worth knowing about: a resource's
+attributes are copied onto **every** span it holds, so 8 KiB of them across
+10,000 spans is 78 MiB written from one request. That is why they get a tighter
+budget than a span's own.
+
+**A truncated upload is refused, not accepted.** Datum checks the gzip stream
+actually finished. Answering `200` to a partial body would tell the collector
+the spans were delivered, and it would never send them again.
+
+`resource_id` comes from the token, as everywhere else. A `resource_id` in the
+resource attributes is stored as an ordinary attribute; it does not decide
+which machine the row belongs to.
+
 ## Managing resources
 
 The roster of machines. These routes need a token with `"admin": true`.
@@ -398,6 +512,12 @@ client_max_body_size 32m;
 Keep that line. A deployment that drops it has no bound on a request body at
 all, and datum listens on `127.0.0.1:8000`, so anything reaching the port
 directly is likewise uncapped.
+
+The two protobuf paths are the exception: both bound what a compressed body may
+*become*, because that is not the same as what arrives. Remote write reads
+snappy's declared length before allocating against it; gzip declares none, so
+the traces path bounds the decompression itself and refuses at one byte past
+the cap rather than after materialising it.
 
 ## Tokens
 
