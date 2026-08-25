@@ -15,7 +15,12 @@ from datum.api.internals.wire import (
     read_varint,
     skip,
 )
-from datum.config.limits import MAX_DECOMPRESSED, MAX_SPAN_ATTRIBUTES, MAX_SPANS
+from datum.config.limits import (
+    MAX_ATTRIBUTE,
+    MAX_DECOMPRESSED,
+    MAX_SPAN_ATTRIBUTES,
+    MAX_SPANS,
+)
 
 SERVICE_NAME = "service.name"
 
@@ -40,6 +45,10 @@ class TooManySpans(TraceError):
 
 class TooManyAttributes(TraceError):
     """One span carrying more attributes than anything real does. Also a 413."""
+
+
+class AttributeTooLarge(TraceError):
+    """One attribute wider than a Map cell should hold. Also a 413."""
 
 
 def decode(body: bytes, resource_id: str) -> list[dict]:
@@ -164,7 +173,10 @@ def _scan_span(payload: bytes, position: int, end: int) -> int:
     attributes = 0
     while position < end:
         tag, position = read_varint(payload, position)
-        attributes += (tag >> 3) == ATTRIBUTE_FIELD
+        if (tag >> 3) == ATTRIBUTE_FIELD and (tag & 7) == LENGTH_DELIMITED:
+            attributes += 1
+            position = _measured(payload, position)
+            continue
         position = skip(payload, position, tag & 7)
 
     if attributes > MAX_SPAN_ATTRIBUTES:
@@ -172,6 +184,16 @@ def _scan_span(payload: bytes, position: int, end: int) -> int:
             f"a span carries {attributes} attributes, but {MAX_SPAN_ATTRIBUTES} is the cap"
         )
     return 1
+
+
+def _measured(payload: bytes, position: int) -> int:
+    """Past one attribute, refusing it if the wire says it is too wide."""
+    length, position = read_varint(payload, position)
+    if length > MAX_ATTRIBUTE:
+        raise AttributeTooLarge(
+            f"an attribute occupies {length} bytes, but {MAX_ATTRIBUTE} is the cap"
+        )
+    return position + length
 
 
 def _count(payload: bytes, position: int, end: int, field: int, inner) -> int:

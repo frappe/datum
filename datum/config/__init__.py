@@ -1,5 +1,6 @@
 from datum.config.api import Settings
 from datum.config.limits import (
+    MAX_ATTRIBUTE,
     MAX_BATCH,
     MAX_DECOMPRESSED,
     MAX_LABELS,
@@ -14,6 +15,7 @@ from datum.config.limits import (
 )
 
 __all__ = [
+    "MAX_ATTRIBUTE",
     "MAX_BATCH",
     "MAX_DECOMPRESSED",
     "MAX_LABELS",

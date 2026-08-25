@@ -1,9 +1,9 @@
 import cramjam
 import pytest
 
-from datum.api.internals.traces import TooManySpans, TraceError, decode
+from datum.api.internals.traces import AttributeTooLarge, TooManySpans, TraceError, decode
 from datum.api.internals.traces.traces_pb2 import ExportTraceServiceRequest
-from datum.config import MAX_SPAN_ATTRIBUTES, MAX_SPANS
+from datum.config import MAX_ATTRIBUTE, MAX_SPAN_ATTRIBUTES, MAX_SPANS
 
 PATH = "/v1/traces"
 RESOURCE = "acme"
@@ -182,6 +182,45 @@ def test_a_span_carrying_too_many_attributes_is_refused():
         one.attributes.add(key=f"key_{index}").value.string_value = "v"
 
     with pytest.raises(TraceError, match=str(MAX_SPAN_ATTRIBUTES)):
+        decode(request.SerializeToString(), RESOURCE)
+
+
+def test_a_single_huge_attribute_is_refused():
+    """Counting attributes does not bound their width: one array can hold
+    megabytes and still be one attribute."""
+    request = ExportTraceServiceRequest()
+    scope = request.resource_spans.add().scope_spans.add()
+    one = scope.spans.add(**span())
+    wide = one.attributes.add(key="wide").value.array_value
+    for index in range(MAX_ATTRIBUTE):
+        wide.values.add().string_value = f"token_{index}"
+
+    with pytest.raises(AttributeTooLarge, match=str(MAX_ATTRIBUTE)):
+        decode(request.SerializeToString(), RESOURCE)
+
+
+def test_an_attribute_just_under_the_cap_is_kept():
+    request = ExportTraceServiceRequest()
+    scope = request.resource_spans.add().scope_spans.add()
+    one = scope.spans.add(**span())
+    one.attributes.add(key="prompt").value.string_value = "x" * (MAX_ATTRIBUTE - 100)
+
+    attributes = decode(request.SerializeToString(), RESOURCE)[0]["attributes"]
+
+    assert len(attributes["prompt"]) == MAX_ATTRIBUTE - 100
+
+
+def test_nesting_deeper_than_protobuf_allows_is_a_400_not_a_500():
+    """protobuf refuses ~100 nested messages itself, so `_plain` never recurses
+    far enough to raise RecursionError."""
+    request = ExportTraceServiceRequest()
+    scope = request.resource_spans.add().scope_spans.add()
+    value = scope.spans.add(**span()).attributes.add(key="deep").value
+    for _ in range(60):
+        value = value.array_value.values.add()
+    value.string_value = "bottom"
+
+    with pytest.raises(TraceError):
         decode(request.SerializeToString(), RESOURCE)
 
 

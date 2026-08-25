@@ -14,7 +14,12 @@ from datum.api.internals.remote import (
     TooManySamples,
     TooManySeries,
 )
-from datum.api.internals.traces import TooManyAttributes, TooManySpans, TraceError
+from datum.api.internals.traces import (
+    AttributeTooLarge,
+    TooManyAttributes,
+    TooManySpans,
+    TraceError,
+)
 from datum.api.internals.wire import BodyTooLarge
 
 UNPROCESSABLE = 422
@@ -31,6 +36,7 @@ STATUS = {
     RemoteWriteError: 400,
     TooManySpans: 413,
     TooManyAttributes: 413,
+    AttributeTooLarge: 413,
     TraceError: 400,
     NotImplementedError: 501,
     ProviderError: 503,
