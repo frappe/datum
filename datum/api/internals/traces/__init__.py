@@ -136,6 +136,8 @@ def _decompressed(body: bytes) -> bytes:
     being checked once it already is. One byte past the cap is enough to refuse.
     """
     if not body.startswith(GZIP_MAGIC):
+        if len(body) > MAX_DECOMPRESSED:
+            raise BodyTooLarge(f"body exceeds the cap of {MAX_DECOMPRESSED} bytes")
         return body
     try:
         payload = zlib.decompressobj(GZIP_WBITS).decompress(body, MAX_DECOMPRESSED + 1)
