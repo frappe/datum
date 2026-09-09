@@ -19,6 +19,8 @@ ALGORITHMS = ["RS256", "RS384", "RS512", "ES256", "ES384", "ES512"]
 PUBLIC_KEY_PATH_VARIABLE = "DATUM_JWT_PUBLIC_KEY_FILE"
 OIDC_ISSUER_VARIABLE = "DATUM_OIDC_ISSUER"
 
+DECODE_OPTIONS = {"verify_aud": False}
+
 DISCOVERY_PATH = "/.well-known/openid-configuration"
 KEY_LIFESPAN = 300
 DISCOVERY_TIMEOUT = 5.0
@@ -68,10 +70,14 @@ class Identity:
 
 
 class TokenVerifier:
-    """Verifies the JWTs Central mints.
+    """Verifies the JWTs Central mints. RSA and ECDSA only; HMAC is never accepted.
 
-    Either a public key on disk or an OIDC issuer to fetch one from. HMAC is
-    deliberately absent: RSA and ECDSA only.
+    Two ways to reach the key, and the issuer wins when both are given:
+
+    - `oidc_issuer` set: the key comes from the issuer's JWKS, chosen by the token's
+      `kid`, and the token's `iss` must be that issuer.
+    - otherwise `public_key`: the one PEM on disk, and no issuer is checked.
+    - neither: nothing verifies, so every call is a 401.
     """
 
     def __init__(self, public_key: str | None = None, oidc_issuer: str | None = None):
@@ -97,27 +103,31 @@ class TokenVerifier:
     def is_configured(self) -> bool:
         return bool(self.public_key or self.oidc_issuer)
 
+    @property
+    def uses_jwks(self) -> bool:
+        """Which of the two paths a token takes."""
+        return bool(self.oidc_issuer)
+
     def resolve(self, token: str) -> Identity | None:
         """The identity a valid token carries, or None. Never raises."""
         if not self.is_configured:
             return None
+        decode = self._decode_from_jwks if self.uses_jwks else self._decode_from_public_key
         try:
-            return Identity.from_claims(self._decode(token))
+            return Identity.from_claims(decode(token))
         except (jwt.InvalidTokenError, jwt.PyJWKClientError):
             return None
 
-    def _decode(self, token: str) -> dict:
-        if not self.oidc_issuer:
-            return jwt.decode(
-                token, self.public_key, algorithms=ALGORITHMS, options={"verify_aud": False}
-            )
-        signing_key = self._signing_key(token)
+    def _decode_from_public_key(self, token: str) -> dict:
+        return jwt.decode(token, self.public_key, algorithms=ALGORITHMS, options=DECODE_OPTIONS)
+
+    def _decode_from_jwks(self, token: str) -> dict:
         return jwt.decode(
             token,
-            signing_key,
+            self._signing_key(token),
             algorithms=ALGORITHMS,
             issuer=self.oidc_issuer,
-            options={"verify_aud": False},
+            options=DECODE_OPTIONS,
         )
 
     def _signing_key(self, token: str):
