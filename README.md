@@ -598,6 +598,9 @@ Read by both `datum-migrate` and the service.
 | `DATUM_JWT_PUBLIC_KEY_FILE` | none | the PEM file to check tokens against |
 | `DATUM_OIDC_ISSUER` | none | fetch keys from an issuer instead. With neither, every call is a 401 |
 
+With both key settings given, the issuer wins: keys come from its JWKS and the
+token's `iss` must match. The PEM is used only when no issuer is set.
+
 The database is always `datum` and the tables are always `samples`, `resources`
 and `logs`. They are not configurable: the migrations name them too, and two
 sources of truth would drift.

@@ -113,3 +113,16 @@ def test_the_issuer_reaches_the_verifier_from_the_unit(monkeypatch, issuer):
 
     assert verifier.is_configured
     assert verifier.resolve(signed_for(issuer)) is not None
+
+
+def test_the_issuer_wins_when_both_are_configured(issuer):
+    """A PEM alongside an issuer does not quietly become a second way in."""
+    verifier = TokenVerifier(public_key=PUBLIC_KEY, oidc_issuer=issuer)
+
+    assert verifier.uses_jwks is True
+    assert verifier.resolve(mint(CLAIMS)) is None
+    assert verifier.resolve(signed_for(issuer)) is not None
+
+
+def test_a_public_key_alone_uses_no_jwks():
+    assert TokenVerifier(public_key=PUBLIC_KEY).uses_jwks is False
