@@ -245,17 +245,7 @@ with traffic rather than with machines, it will need one.
 
 ## Setting it up
 
-`./setup.sh` does all three steps below in one go — it runs the migrations and
-then starts the service. Export the `DATUM_*` variables first, plus
-`DATUM_INSIGHTS_PASSWORD` for the insights user, and set
-`DATUM_CLICKHOUSE_USER=datum`:
-
-```bash
-set -a && source .dev/datum.env && set +a
-DATUM_INSIGHTS_PASSWORD=pick-another-one ./setup.sh
-```
-
-By hand it is three steps, in this order. Datum itself issues no DDL, so nothing exists until
+Three steps, in this order. Datum itself issues no DDL, so nothing exists until
 the migrations run, and the service refuses to start without them.
 
 **1. Write an env file.** Nothing generates it; see
