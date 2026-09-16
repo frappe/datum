@@ -36,10 +36,16 @@ class Settings:
         if not host:
             raise RuntimeError("DATUM_CLICKHOUSE_HOST is not set; point it at ClickHouse.")
 
+        password = os.environ.get("DATUM_USER_PASSWORD")
+        if not password:
+            raise RuntimeError(
+                "DATUM_USER_PASSWORD is not set; the service would connect with no password."
+            )
+
         return cls(
             host=host,
             port=int(os.environ.get("DATUM_CLICKHOUSE_PORT", cls.port)),
             username=os.environ.get("DATUM_CLICKHOUSE_USER", cls.username),
-            password=os.environ.get("DATUM_USER_PASSWORD", cls.password),
+            password=password,
             timeout=float(os.environ.get("DATUM_TIMEOUT", cls.timeout)),
         )

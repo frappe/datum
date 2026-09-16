@@ -583,7 +583,7 @@ Read by both `datum-migrate` and the service.
 | `DATUM_CLICKHOUSE_HOST` | required | where ClickHouse is |
 | `DATUM_CLICKHOUSE_PORT` | `8123` | its HTTP port |
 | `DATUM_CLICKHOUSE_USER` | `default` | who the service connects as; should be `datum` |
-| `DATUM_USER_PASSWORD` | empty | its password, and what the migration creates that user with |
+| `DATUM_USER_PASSWORD` | required | its password, and what the migration creates that user with |
 | `DATUM_TIMEOUT` | `30` | seconds, connect and execute |
 | `DATUM_JWT_PUBLIC_KEY_FILE` | none | the PEM file to check tokens against |
 | `DATUM_OIDC_ISSUER` | none | fetch keys from an issuer instead. With neither, every call is a 401 |
