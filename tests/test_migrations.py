@@ -29,7 +29,7 @@ def client(monkeypatch):
 @pytest.fixture(autouse=True)
 def no_ambient_environment(monkeypatch):
     """A developer's own env must not decide what a test asserts."""
-    for variable in ("DATUM_CLICKHOUSE_HOST", "DATUM_CLICKHOUSE_PASSWORD", "INSIGHTS_PASSWORD"):
+    for variable in ("DATUM_CLICKHOUSE_HOST", "DATUM_USER_PASSWORD", "INSIGHTS_PASSWORD"):
         monkeypatch.delenv(variable, raising=False)
 
 
@@ -134,7 +134,7 @@ def test_connection_and_passwords_come_from_the_env_file(monkeypatch, client):
         monkeypatch,
         "--insights-user-password",
         "typed",
-        DATUM_CLICKHOUSE_PASSWORD="from-env",
+        DATUM_USER_PASSWORD="from-env",
     )
 
     assert client.options["host"] == "clickhouse.local"
@@ -149,7 +149,7 @@ def test_migrations_connect_as_default_not_as_the_service_user(monkeypatch, clie
         monkeypatch,
         "--insights-user-password",
         "typed",
-        DATUM_CLICKHOUSE_PASSWORD="from-env",
+        DATUM_USER_PASSWORD="from-env",
     )
 
     assert client.options["username"] == "default"
@@ -161,7 +161,7 @@ def test_an_omitted_default_password_is_empty_not_none(monkeypatch, client):
         monkeypatch,
         "--insights-user-password",
         "typed",
-        DATUM_CLICKHOUSE_PASSWORD="from-env",
+        DATUM_USER_PASSWORD="from-env",
     )
 
     assert client.options["password"] == ""
@@ -174,7 +174,7 @@ def test_the_default_password_is_used_when_given(monkeypatch, client):
         "typed",
         "--default-user-password",
         "admin-pw",
-        DATUM_CLICKHOUSE_PASSWORD="from-env",
+        DATUM_USER_PASSWORD="from-env",
     )
 
     assert client.options["password"] == "admin-pw"
@@ -185,7 +185,7 @@ def test_the_port_comes_from_the_environment_as_a_number(monkeypatch, client):
         monkeypatch,
         "--insights-user-password",
         "typed",
-        DATUM_CLICKHOUSE_PASSWORD="from-env",
+        DATUM_USER_PASSWORD="from-env",
         DATUM_CLICKHOUSE_PORT="9999",
     )
 
@@ -194,7 +194,7 @@ def test_the_port_comes_from_the_environment_as_a_number(monkeypatch, client):
 
 def test_a_missing_host_fails_before_connecting(monkeypatch):
     monkeypatch.setattr("sys.argv", ["datum-migrate", "--insights-user-password", "typed"])
-    monkeypatch.setenv("DATUM_CLICKHOUSE_PASSWORD", "from-env")
+    monkeypatch.setenv("DATUM_USER_PASSWORD", "from-env")
 
     with pytest.raises(SystemExit, match="DATUM_CLICKHOUSE_HOST"):
         migrations.main()
@@ -205,7 +205,7 @@ def test_a_missing_datum_password_fails_before_connecting(monkeypatch):
     monkeypatch.setattr("sys.argv", ["datum-migrate", "--insights-user-password", "typed"])
     monkeypatch.setenv("DATUM_CLICKHOUSE_HOST", "clickhouse.local")
 
-    with pytest.raises(SystemExit, match="DATUM_CLICKHOUSE_PASSWORD"):
+    with pytest.raises(SystemExit, match="DATUM_USER_PASSWORD"):
         migrations.main()
 
 

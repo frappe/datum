@@ -40,6 +40,6 @@ class Settings:
             host=host,
             port=int(os.environ.get("DATUM_CLICKHOUSE_PORT", cls.port)),
             username=os.environ.get("DATUM_CLICKHOUSE_USER", cls.username),
-            password=os.environ.get("DATUM_CLICKHOUSE_PASSWORD", cls.password),
+            password=os.environ.get("DATUM_USER_PASSWORD", cls.password),
             timeout=float(os.environ.get("DATUM_TIMEOUT", cls.timeout)),
         )
