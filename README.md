@@ -257,7 +257,7 @@ cat > .dev/datum.env <<'ENV'
 DATUM_CLICKHOUSE_HOST=127.0.0.1
 DATUM_CLICKHOUSE_PORT=8123
 DATUM_CLICKHOUSE_USER=datum
-DATUM_CLICKHOUSE_PASSWORD=pick-something
+DATUM_USER_PASSWORD=pick-something
 DATUM_JWT_PUBLIC_KEY_FILE=.dev/central.pub
 ENV
 ```
@@ -307,7 +307,7 @@ not enable — add a `users.d/` drop-in and restart:
 
 Two passwords go in:
 
-- **datum's** comes from `DATUM_CLICKHOUSE_PASSWORD` in the env file. The
+- **datum's** comes from `DATUM_USER_PASSWORD` in the env file. The
   migration creates the user with it, and the service later connects with it, so
   one value covers both.
 - **insights'** is the `--insights-user-password` flag. Datum never connects as
@@ -583,7 +583,7 @@ Read by both `datum-migrate` and the service.
 | `DATUM_CLICKHOUSE_HOST` | required | where ClickHouse is |
 | `DATUM_CLICKHOUSE_PORT` | `8123` | its HTTP port |
 | `DATUM_CLICKHOUSE_USER` | `default` | who the service connects as; should be `datum` |
-| `DATUM_CLICKHOUSE_PASSWORD` | empty | its password, and what the migration creates that user with |
+| `DATUM_USER_PASSWORD` | required | its password, and what the migration creates that user with |
 | `DATUM_TIMEOUT` | `30` | seconds, connect and execute |
 | `DATUM_JWT_PUBLIC_KEY_FILE` | none | the PEM file to check tokens against |
 | `DATUM_OIDC_ISSUER` | none | fetch keys from an issuer instead. With neither, every call is a 401 |

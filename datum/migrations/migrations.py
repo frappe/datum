@@ -54,13 +54,13 @@ def main() -> None:
     arguments = parser.parse_args()
 
     host = os.environ.get("DATUM_CLICKHOUSE_HOST")
-    datum_user_password = os.environ.get("DATUM_CLICKHOUSE_PASSWORD")
+    datum_user_password = os.environ.get("DATUM_USER_PASSWORD")
 
     if not host:
         raise SystemExit("DATUM_CLICKHOUSE_HOST is unset. Source the env file first.")
 
     if not datum_user_password:
-        raise SystemExit("DATUM_CLICKHOUSE_PASSWORD is unset. Source the env file first.")
+        raise SystemExit("DATUM_USER_PASSWORD is unset. Source the env file first.")
 
     applied = run_migrations(
         host=host,
