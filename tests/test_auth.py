@@ -1,10 +1,7 @@
 import time
 
-import jwt
-import pytest
-
 from datum.api.internals import Identity, TokenVerifier
-from tests.conftest import CLAIMS, IDENTITY, PUBLIC_KEY, TOKEN, mint, tamper
+from tests.conftest import CLAIMS, IDENTITY, JWKS_URL, REGION_ID, TOKEN, mint, tamper
 
 
 def test_a_signed_token_resolves_to_its_identity(tokens):
@@ -12,11 +9,12 @@ def test_a_signed_token_resolves_to_its_identity(tokens):
 
 
 def test_a_token_signed_by_someone_else_is_refused(tokens):
+    """A key that is not on the published set, under the key id of one that is."""
     from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
     other = (
-        rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        Ed25519PrivateKey.generate()
         .private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
@@ -106,18 +104,29 @@ def test_a_token_without_a_resource_id_is_no_identity_at_all(tokens):
     assert tokens.resolve(mint({"access": ["read", "write"]})) is None
 
 
-def test_the_public_key_is_what_gates_access():
-    assert TokenVerifier(PUBLIC_KEY).is_configured is True
+def test_a_key_set_and_a_region_are_both_needed():
+    """A key set without a region would take any region's token."""
+    assert TokenVerifier(jwks_url=JWKS_URL, region_id=REGION_ID).is_configured is True
+    assert TokenVerifier(jwks_url=JWKS_URL).is_configured is False
+    assert TokenVerifier(region_id=REGION_ID).is_configured is False
     assert TokenVerifier().is_configured is False
 
 
-def test_a_token_with_an_aud_claim_is_still_accepted(tokens):
-    """Central mints every token with `aud` (the pilot_credential_id). Datum
-    never reads it — the tenant boundary is `resource_id`, not audience — so
-    a token carrying `aud` must resolve, not raise `InvalidAudienceError`."""
-    token_with_aud = mint({"resource_id": "acme", "access": ["read", "write"], "aud": "pilot-123"})
+def test_a_token_addressed_to_another_region_is_refused(tokens):
+    """One region's key set is every region's key set, so the audience is the only thing
+    keeping a pilot elsewhere in the fleet from writing here."""
+    elsewhere = mint({**CLAIMS, "aud": "atlas-datum:9"})
 
-    assert tokens.resolve(token_with_aud) == IDENTITY
+    assert tokens.resolve(elsewhere) is None
+
+
+def test_a_token_addressed_to_this_region_is_accepted(tokens):
+    assert tokens.resolve(mint({**CLAIMS, "aud": f"atlas-datum:{REGION_ID}"})) == IDENTITY
+
+
+def test_a_token_addressed_to_nothing_is_refused(tokens):
+    """The pilot_credential_id this used to carry names no host."""
+    assert tokens.resolve(mint({**CLAIMS, "aud": "pilot-123"})) is None
 
 
 def test_an_admin_names_the_fleet_not_a_machine():
@@ -130,8 +139,7 @@ def test_an_admin_names_the_fleet_not_a_machine():
 
 
 def test_a_non_admin_still_must_name_itself():
-    with pytest.raises(jwt.InvalidTokenError, match="resource_id"):
-        Identity.from_claims({"access": ["write"]})
+    assert Identity.from_claims({"access": ["write"]}) is None
 
 
 def test_an_admin_naming_no_machine_cannot_write():

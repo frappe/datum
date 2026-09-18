@@ -49,8 +49,8 @@ def create_app(
 ) -> FastAPI:
     """Build the `datum-api` application.
 
-    `tokens` defaults to the public key in `DATUM_JWT_PUBLIC_KEY`. With none
-    set, every /v1 call is a 401.
+    `tokens` defaults to the key set in `DATUM_JWKS_URL`. With none set, every
+    /v1 call is a 401.
     """
     app = FastAPI(
         title=TITLE,

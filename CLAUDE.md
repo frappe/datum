@@ -82,11 +82,11 @@ ClickHouse stores them. Readers get them back from ClickHouse directly — datum
     regenerate it rather than editing it, and ruff skips it
 - `datum_client/` — what producers import. Standard library only, and it must never import from
   the service.
-- `tests/conftest.py` — a fixed test keypair, a `FakeProvider`, and authenticated and
-  anonymous clients
+- `tests/conftest.py` — a fixed test keypair, a local server publishing the key set, a
+  `FakeProvider`, and authenticated and anonymous clients
 - `tests/` — `test_api.py`, `test_ingest.py`, `test_logs.py`, `test_resource.py`,
   `test_remote_write.py`, `test_providers.py`, `test_migrations.py`, `test_limits.py`,
-  `test_limiter.py`, `test_auth.py`, `test_key_loading.py`, `test_oidc.py`
+  `test_limiter.py`, `test_auth.py`, `test_key_set.py`
 
 There is no installer and no systemd unit in this repo. datum-api is one process, run however
 the host already runs things; the chef `datum` recipe bakes an image that does it.
