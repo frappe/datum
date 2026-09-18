@@ -9,7 +9,7 @@ import time
 import jwt
 
 from datum.api.internals import TokenVerifier
-from datum.api.internals.auth import JWKS_URL_VARIABLE, issuer_for_key_id
+from datum.api.internals.auth import JWKS_URL_VARIABLE, REGION_ID_VARIABLE, issuer_for_key_id
 from tests.conftest import CLAIMS, IDENTITY, JWKS_URL, KEY_ID, REGION_ID, mint, serve, tamper
 
 
@@ -45,8 +45,9 @@ def test_a_key_set_that_answers_404_is_refused():
     assert TokenVerifier(jwks_url=f"{serve()}-absent").resolve(mint()) is None
 
 
-def test_the_url_reaches_the_verifier_from_the_unit(monkeypatch):
+def test_the_url_and_region_reach_the_verifier_from_the_unit(monkeypatch):
     monkeypatch.setenv(JWKS_URL_VARIABLE, JWKS_URL)
+    monkeypatch.setenv(REGION_ID_VARIABLE, REGION_ID)
 
     from_env = TokenVerifier.from_env()
 
@@ -60,6 +61,17 @@ def test_no_key_set_verifies_nothing():
 
     assert empty.is_configured is False
     assert empty.resolve(mint()) is None
+
+
+def test_the_audience_names_this_regions_datum():
+    assert TokenVerifier(jwks_url=JWKS_URL, region_id="7").audience == "atlas-datum:7"
+
+
+def test_a_token_for_another_regions_datum_is_refused():
+    """Same key, same issuer, same resource -- addressed elsewhere."""
+    verified_here = TokenVerifier(jwks_url=JWKS_URL, region_id="9")
+
+    assert verified_here.resolve(mint()) is None
 
 
 def test_a_token_naming_an_issuer_its_key_does_not_belong_to_is_refused():

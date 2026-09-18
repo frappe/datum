@@ -70,11 +70,12 @@ def serve(handler: type[BaseHTTPRequestHandler] = Publisher) -> str:
 
 JWKS_URL = serve()
 
+AUDIENCE = f"atlas-datum:{REGION_ID}"
 CLAIMS = {
     "iss": "central",
+    "aud": AUDIENCE,
     "resource_id": "acme",
     "access": ["read", "write"],
-    "aud": "test-audience",
 }
 IDENTITY = Identity(resource_id="acme", access=frozenset({"read", "write"}))
 
@@ -86,7 +87,7 @@ def mint(claims: dict | None = None, key: str | None = None, headers: dict | Non
     `claims` states only what the test is about."""
     now = int(time.time())
     return jwt.encode(
-        {"iss": "central", "iat": now, "exp": now + 300, **(claims or CLAIMS)},
+        {"iss": "central", "aud": AUDIENCE, "iat": now, "exp": now + 300, **(claims or CLAIMS)},
         key or PRIVATE_KEY,
         algorithm=ALGORITHM,
         headers=headers or {"kid": KEY_ID},

@@ -19,9 +19,9 @@ JWKS_URL_VARIABLE = "DATUM_JWKS_URL"
 REGION_ID_VARIABLE = "DATUM_REGION_ID"
 KEY_LIFESPAN = 300
 
-# `aud` is the pilot_credential_id and `sub` is absent on a metrics or log token, so
-# neither is demanded. The tenant boundary is `resource_id`, which `Identity` enforces.
-DECODE_OPTIONS = {"verify_aud": False, "require": ["iss", "iat", "exp"]}
+# `aud` names one region's datum, and is the only thing that keeps another region's
+# token out. The machine inside the region is `resource_id`, which `Identity` enforces.
+DECODE_OPTIONS = {"verify_aud": True, "require": ["iss", "aud", "iat", "exp"]}
 
 
 @dataclass(frozen=True)
@@ -47,13 +47,13 @@ class Identity:
         return WRITE in self.access and bool(self.resource_id)
 
     @classmethod
-    def from_claims(cls, claims: dict) -> Identity:
+    def from_claims(cls, claims: dict) -> Identity | None:
         """A machine names itself; an admin names the fleet, so it may carry none."""
         resource_id = claims.get("resource_id")
         is_admin = claims.get(ADMIN_CLAIM) is True
 
         if not resource_id and not is_admin:
-            raise jwt.InvalidTokenError("Token carries no resource_id.")
+            return None
 
         access = claims.get(ACCESS_CLAIM) or ()
 
@@ -83,7 +83,11 @@ class TokenVerifier:
     The merged key set at `jwks_url` carries more than one issuer's keys, so a valid
     signature alone does not say who signed. The key id names the issuer, and `iss` is
     held to it. Datum holds no key of its own, so a rotation needs nothing deployed
-    here. With no URL set every call is a 401.
+    here.
+
+    `region_id` is this host's region, and a token must be addressed to it: one region's
+    key set is every region's key set, so without the audience a pilot anywhere could
+    write here. With either setting missing every call is a 401.
     """
 
     def __init__(self, jwks_url: str | None = None, region_id: str | None = None):
@@ -100,47 +104,62 @@ class TokenVerifier:
 
     @property
     def is_configured(self) -> bool:
-        return bool(self.jwks_url)
+        """Both, or nothing verifies. A key set without a region would take any region's
+        token, which is the hole the audience exists to close."""
+        return bool(self.jwks_url and self.region_id)
+
+    @property
+    def audience(self) -> str:
+        """The audience a token must name to be written here."""
+        return f"atlas-datum:{self.region_id}"
 
     def resolve(self, token: str) -> Identity | None:
         """The identity a valid token carries, or None. Never raises."""
+        claims = self.token_claims(token)
+
+        return Identity.from_claims(claims) if claims else None
+
+    def token_claims(self, token: str) -> dict | None:
+        """What one token carries, or None when it is not usable.
+
+        Datum verifies against the merged key set it is pointed at and holds no
+        verification secret of its own."""
         if not self.is_configured:
             return None
+
         try:
-            return Identity.from_claims(self._decode(token))
-        except (jwt.InvalidTokenError, jwt.PyJWKClientError):
+            header = jwt.get_unverified_header(token)
+            key_id = header.get("kid")
+            if not isinstance(key_id, str) or header.get("alg") != ALGORITHM:
+                return None
+
+            # The key set carries more than one issuer's keys, so a signature alone does
+            # not say who signed. The key id does, and `iss` is then held to it.
+            issuer = issuer_for_key_id(key_id, self.region_id)
+            if issuer is None:
+                return None
+
+            # An unknown key id must not make an attacker refetch the key set.
+            signing_key = jwt.PyJWKClient.match_kid(self.jwks_client().get_signing_keys(), key_id)
+            if signing_key is None or signing_key.algorithm_name != ALGORITHM:
+                return None
+
+            return jwt.decode(
+                token,
+                signing_key.key,
+                algorithms=[ALGORITHM],
+                audience=self.audience,
+                issuer=issuer,
+                options=DECODE_OPTIONS,
+            )
+        except (jwt.PyJWTError, jwt.PyJWKClientError):
             return None
 
-    def _decode(self, token: str) -> dict:
-        header = jwt.get_unverified_header(token)
-        key_id = header.get("kid")
-        if not isinstance(key_id, str) or header.get("alg") != ALGORITHM:
-            raise jwt.InvalidTokenError("The token names no key, or another algorithm.")
-
-        issuer = issuer_for_key_id(key_id, self.region_id)
-        if issuer is None:
-            raise jwt.InvalidTokenError(f"No issuer owns the key id {key_id}.")
-
-        return jwt.decode(
-            token,
-            self._signing_key(key_id),
-            algorithms=[ALGORITHM],
-            issuer=issuer,
-            options=DECODE_OPTIONS,
-        )
-
-    def _signing_key(self, key_id: str):
-        """The key the token's `kid` names.
-
-        An unknown key id must not make an attacker refetch the key set. A set that
-        cannot be read raises `PyJWKClientError`, so `resolve` answers 401 while the
-        publisher is down rather than letting a call through unverified.
-        """
+    def jwks_client(self) -> jwt.PyJWKClient:
+        """One key set client per verifier: it caches the keys, so nothing refetches
+        per request. A set that cannot be read raises, and the call is a 401 rather
+        than one let through unverified."""
         if self._keys is None:
             self._keys = jwt.PyJWKClient(self.jwks_url, lifespan=KEY_LIFESPAN)
 
-        key = jwt.PyJWKClient.match_kid(self._keys.get_signing_keys(), key_id)
-        if key is None or key.algorithm_name != ALGORITHM:
-            raise jwt.InvalidTokenError(f"No {ALGORITHM} key is named {key_id}.")
-
-        return key.key
+        return self._keys
