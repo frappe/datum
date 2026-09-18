@@ -1,66 +1,96 @@
+import json
+import threading
+import time
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
 import jwt
 import pytest
 from fastapi.testclient import TestClient
 
 from datum import Settings, create_app
 from datum.api.internals import Identity, TokenVerifier
+from datum.api.internals.auth import ALGORITHM
 from datum.api.internals.providers import DatumProvider
 
 SETTINGS = Settings(host="localhost")
 
-# A fixed throwaway keypair, so tests never generate one and both copies of this
-# module agree on it. Never used anywhere but here.
+# A fixed throwaway keypair, so tests never generate one. Never used anywhere but here.
 PRIVATE_KEY = """\
 -----BEGIN PRIVATE KEY-----
-MIIEvAIBADANBgkqhkiG9w0BAQEFAASCBKYwggSiAgEAAoIBAQCxgnC60m40MN/1
-SYKwDM7iiCvi32O7jK52ojd51Ugk1bjVkMxi1Dbr2xd3d6EfKB83v6HLxLEdU4V/
-y+pB2p2TKnYi9TdLNLCwRWSgamzumr8jrsfw8m3ZicJ9PiqKbJzBbZKkJxGGsjdf
-fTeQb04wQy8DCxWGoE6qLhJgR7lPITaR23qQSo/LE4TB5Nq59YmvhNdz83/v5Q6o
-ftIKX1wZdshOtS8h9uryqHgg56aSQgTPwR7CCDFsMYS2oOn9hr/R0WUn0Voe5I2f
-XQRoh6+maKgMDYQvZyBp0ZP/bBOR3jCXxzjYJtRKrcnDgwoBiUNs+2hFVej6n5kk
-1ytODiZrAgMBAAECgf8iq1dZJcBgcStMvQ7JU7cUh4QKy5avCssIYKZ1JTLx/swa
-6i0BIHGZnzD2JGdTroJqYQM4yTHOiIGKdElMk2YzWBe6vCoQhjn8M5Fzw1WDRLYQ
-QhLK/I537nAOBhZI8u2q2bvKU9cYd7ZY8BvqGdMrmfOUpJWPtb+nfVgZdei7i22i
-s9gkQqf7Ki94mahXZuYFi1+imDGfWgtxOSD5F4sHYGHr7CLbfbYljt+iJHxFwSpc
-KJB6NzuGS7v++x8LM85ue82s9zZEmxdS6CX6t2CXSy8NHvWQDpi/rAJmvgPRghzD
-hWc23kzOeC6aMyuTRuk8rr5sLj4jkw3EJkHTQGECgYEA5MM78kMDst/0xp8khw/P
-AAbUfCYEBpiJiFSFHZQtf0IDL/y+JIclx5z3S0+2RY0XfuF+izQgJSahSLi9VW1b
-lYLa7aPM2RrVh18OCrgXZRU4jxUOb7sCyUALXy15iXDXeRiBNN3br1C/K86RXwOu
-9jB8/RTRuPYarRZV72fO/1kCgYEAxqT+WwUPlACESj1y3jQV8wKUu6pCRQfDoPuQ
-YYmLYVfdAlBnYsWvgVluguB4c2AY676Fhg8IQM0ZJgR3dbd4u4rrBg9wmWtkOc+t
-1m6STh0cxUdbL6yg9uC4FbmefQS/ZC8667t2l0fpjjqrJwXNkkjQb8ViD6lLnYM5
-bzquv2MCgYEA0Ku6UemJRTB+8nMWedEUzHxudPSkdXPM+LvIVUvmGJAZojtVIrLY
-5nWrKlqC9HyYMxf0O3yH2fub4V8K7hL8GKytkVn6MQwGPR6bC3ITfRRXbEUTzx1y
-lCtEdERh+doh4wdUTOoXS5tHVultt5L/lPhz+tNz3tk3Si32o5Q4wLkCgYA7kNZE
-7OuS8eS5blu3jd7XE/sNmyxsDrv21fihhuEou3QmcX3O/IB4RR0CWdVEo5hVeLgJ
-TxCmfdoAsG4x+mZVtn5rPs4A81cGjuQN3PI6QjiSX6dUUGukHBaXTSXdT0MlA5Sj
-g384NfQvFiCkfvT53KPEIGgbUiS+gs8CL5KfCQKBgQCnhhauQ1P6b9BXRaeiiTEv
-U53Q69U2TC6IjfxiAAs6s2sBpSZjpmyLznnFRUo/VfUZmVuAuEROf7qRrEiuOWQ6
-+mqmfTgWBGcZJWz4T93ce07IxFH8pU7ROCDwFHjI4EHorHFSK71uQW3//mpvvpLc
-SYQC0HT+ZTWRe9Nf2t+EtA==
+MC4CAQAwBQYDK2VwBCIEILkupBggTu21cMflw8H/Il2dONYkt2o94weh5u7gX/gK
 -----END PRIVATE KEY-----
 """
 
 PUBLIC_KEY = """\
 -----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAsYJwutJuNDDf9UmCsAzO
-4ogr4t9ju4yudqI3edVIJNW41ZDMYtQ269sXd3ehHygfN7+hy8SxHVOFf8vqQdqd
-kyp2IvU3SzSwsEVkoGps7pq/I67H8PJt2YnCfT4qimycwW2SpCcRhrI3X303kG9O
-MEMvAwsVhqBOqi4SYEe5TyE2kdt6kEqPyxOEweTaufWJr4TXc/N/7+UOqH7SCl9c
-GXbITrUvIfbq8qh4IOemkkIEz8EewggxbDGEtqDp/Ya/0dFlJ9FaHuSNn10EaIev
-pmioDA2EL2cgadGT/2wTkd4wl8c42CbUSq3Jw4MKAYlDbPtoRVXo+p+ZJNcrTg4m
-awIDAQAB
+MCowBQYDK2VwAyEAGQQFtXr9RIcyNvvetKH/GRiNPSNQ54Idc0ENA9r+ewQ=
 -----END PUBLIC KEY-----
 """
 
 
-CLAIMS = {"resource_id": "acme", "access": ["read", "write"], "aud": "test-audience"}
+KEY_ID = "central:1"
+REGION_ID = "42"
+
+
+def jwks() -> dict:
+    """The merged set Atlas publishes, as far as datum is concerned."""
+    from cryptography.hazmat.primitives.serialization import load_pem_public_key
+
+    key = jwt.algorithms.OKPAlgorithm.to_jwk(load_pem_public_key(PUBLIC_KEY.encode()), as_dict=True)
+    return {"keys": [{**key, "kid": KEY_ID, "use": "sig", "alg": ALGORITHM}]}
+
+
+class Publisher(BaseHTTPRequestHandler):
+    """Serves the key set, the way Central does."""
+
+    def do_GET(self):
+        if self.path == "/keys":
+            self._send(jwks())
+        else:
+            self.send_error(404)
+
+    def _send(self, document: dict) -> None:
+        body = json.dumps(document).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *args):
+        pass
+
+
+def serve(handler: type[BaseHTTPRequestHandler] = Publisher) -> str:
+    """Start one key-set server on a free port and return the URL of its key set."""
+    server = HTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return f"http://127.0.0.1:{server.server_port}/keys"
+
+
+JWKS_URL = serve()
+
+CLAIMS = {
+    "iss": "central",
+    "resource_id": "acme",
+    "access": ["read", "write"],
+    "aud": "test-audience",
+}
 IDENTITY = Identity(resource_id="acme", access=frozenset({"read", "write"}))
 
 
 def mint(claims: dict | None = None, key: str | None = None, headers: dict | None = None) -> str:
-    """A JWT the way Central would sign one."""
-    return jwt.encode(claims or CLAIMS, key or PRIVATE_KEY, algorithm="RS256", headers=headers)
+    """A JWT the way Central would sign one, under the key it publishes.
+
+    The registered claims datum requires are filled in, so a caller passing its own
+    `claims` states only what the test is about."""
+    now = int(time.time())
+    return jwt.encode(
+        {"iss": "central", "iat": now, "exp": now + 300, **(claims or CLAIMS)},
+        key or PRIVATE_KEY,
+        algorithm=ALGORITHM,
+        headers=headers or {"kid": KEY_ID},
+    )
 
 
 TOKEN = mint()
@@ -108,7 +138,7 @@ class FakeProvider(DatumProvider):
 
 @pytest.fixture
 def tokens():
-    return TokenVerifier(PUBLIC_KEY)
+    return TokenVerifier(jwks_url=JWKS_URL, region_id=REGION_ID)
 
 
 @pytest.fixture

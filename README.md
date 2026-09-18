@@ -258,7 +258,8 @@ DATUM_CLICKHOUSE_HOST=127.0.0.1
 DATUM_CLICKHOUSE_PORT=8123
 DATUM_CLICKHOUSE_USER=datum
 DATUM_USER_PASSWORD=pick-something
-DATUM_JWT_PUBLIC_KEY_FILE=.dev/central.pub
+DATUM_JWKS_URL=https://atlas.example.com/api/atlas/jwks.json
+DATUM_REGION_ID=1
 ENV
 ```
 
@@ -585,11 +586,16 @@ Read by both `datum-migrate` and the service.
 | `DATUM_CLICKHOUSE_USER` | `default` | who the service connects as; should be `datum` |
 | `DATUM_USER_PASSWORD` | required | its password, and what the migration creates that user with |
 | `DATUM_TIMEOUT` | `30` | seconds, connect and execute |
-| `DATUM_JWT_PUBLIC_KEY_FILE` | none | the PEM file to check tokens against |
-| `DATUM_OIDC_ISSUER` | none | fetch keys from an issuer instead. With neither, every call is a 401 |
+| `DATUM_JWKS_URL` | none | the merged key set to verify tokens against. Unset, every call is a 401 |
+| `DATUM_REGION_ID` | none | this region, so its Atlas may sign too. Unset, only Central may |
 
-With both key settings given, the issuer wins: keys come from its JWKS and the
-token's `iss` must match. The PEM is used only when no issuer is set.
+The full URL of the key set, not a base to discover one from. Atlas serves it at
+`/api/atlas/jwks.json`, merging Central's published keys with the region's own.
+
+Ed25519 only. A key id names its issuer -- `central:` or `atlas:<region-id>:` --
+and a token's `iss` must equal it, so one key on the set cannot sign as another
+issuer. Keys are cached for 5 minutes. Datum holds no key of its own, so a rotation
+needs nothing deployed here.
 
 The database is always `datum` and the tables are always `samples`, `resources`
 and `logs`. They are not configurable: the migrations name them too, and two

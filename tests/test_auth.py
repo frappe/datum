@@ -4,7 +4,7 @@ import jwt
 import pytest
 
 from datum.api.internals import Identity, TokenVerifier
-from tests.conftest import CLAIMS, IDENTITY, PUBLIC_KEY, TOKEN, mint, tamper
+from tests.conftest import CLAIMS, IDENTITY, JWKS_URL, TOKEN, mint, tamper
 
 
 def test_a_signed_token_resolves_to_its_identity(tokens):
@@ -12,11 +12,12 @@ def test_a_signed_token_resolves_to_its_identity(tokens):
 
 
 def test_a_token_signed_by_someone_else_is_refused(tokens):
+    """A key that is not on the published set, under the key id of one that is."""
     from cryptography.hazmat.primitives import serialization
-    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
     other = (
-        rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        Ed25519PrivateKey.generate()
         .private_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PrivateFormat.PKCS8,
@@ -106,8 +107,8 @@ def test_a_token_without_a_resource_id_is_no_identity_at_all(tokens):
     assert tokens.resolve(mint({"access": ["read", "write"]})) is None
 
 
-def test_the_public_key_is_what_gates_access():
-    assert TokenVerifier(PUBLIC_KEY).is_configured is True
+def test_the_key_set_is_what_gates_access():
+    assert TokenVerifier(jwks_url=JWKS_URL).is_configured is True
     assert TokenVerifier().is_configured is False
 
 

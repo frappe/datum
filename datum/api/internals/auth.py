@@ -1,11 +1,7 @@
 from __future__ import annotations
 
-import json
 import os
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
-from pathlib import Path
 
 import jwt
 
@@ -14,16 +10,18 @@ ADMIN_CLAIM = "admin"
 WRITE = "write"
 
 ADMIN_CALLER = "admin"
-ALGORITHMS = ["RS256", "RS384", "RS512", "ES256", "ES384", "ES512"]
+# Every key on the merged set is Ed25519. Pinning the algorithm keeps a token from
+# naming a weaker one and being verified against a key meant for this.
+ALGORITHM = "EdDSA"
+CENTRAL_ISSUER = "central"
 
-PUBLIC_KEY_PATH_VARIABLE = "DATUM_JWT_PUBLIC_KEY_FILE"
-OIDC_ISSUER_VARIABLE = "DATUM_OIDC_ISSUER"
-
-DECODE_OPTIONS = {"verify_aud": False}
-
-DISCOVERY_PATH = "/.well-known/openid-configuration"
+JWKS_URL_VARIABLE = "DATUM_JWKS_URL"
+REGION_ID_VARIABLE = "DATUM_REGION_ID"
 KEY_LIFESPAN = 300
-DISCOVERY_TIMEOUT = 5.0
+
+# `aud` is the pilot_credential_id and `sub` is absent on a metrics or log token, so
+# neither is demanded. The tenant boundary is `resource_id`, which `Identity` enforces.
+DECODE_OPTIONS = {"verify_aud": False, "require": ["iss", "iat", "exp"]}
 
 
 @dataclass(frozen=True)
@@ -69,87 +67,80 @@ class Identity:
         )
 
 
+def issuer_for_key_id(key_id: str, region_id: str = "") -> str | None:
+    """The issuer whose key id namespace this is, or None when no issuer claims it."""
+    issuers = [CENTRAL_ISSUER] + ([f"atlas:{region_id}"] if region_id else [])
+    for issuer in issuers:
+        if key_id.startswith(f"{issuer}:") and key_id.removeprefix(f"{issuer}:"):
+            return issuer
+
+    return None
+
+
 class TokenVerifier:
-    """Verifies the JWTs Central mints. RSA and ECDSA only; HMAC is never accepted.
+    """Verifies the JWTs Central mints. Ed25519 only; nothing else is accepted.
 
-    Two ways to reach the key, and the issuer wins when both are given:
-
-    - `oidc_issuer` set: the key comes from the issuer's JWKS, chosen by the token's
-      `kid`, and the token's `iss` must be that issuer.
-    - otherwise `public_key`: the one PEM on disk, and no issuer is checked.
-    - neither: nothing verifies, so every call is a 401.
+    The merged key set at `jwks_url` carries more than one issuer's keys, so a valid
+    signature alone does not say who signed. The key id names the issuer, and `iss` is
+    held to it. Datum holds no key of its own, so a rotation needs nothing deployed
+    here. With no URL set every call is a 401.
     """
 
-    def __init__(self, public_key: str | None = None, oidc_issuer: str | None = None):
-        self.public_key = (public_key or "").strip()
-        self.oidc_issuer = (oidc_issuer or "").strip().rstrip("/")
+    def __init__(self, jwks_url: str | None = None, region_id: str | None = None):
+        self.jwks_url = (jwks_url or "").strip()
+        self.region_id = (region_id or "").strip()
         self._keys: jwt.PyJWKClient | None = None
 
     @classmethod
     def from_env(cls) -> TokenVerifier:
-        """A key path that is set but unreadable is a startup failure, never a
-        service that silently answers 401 to everyone."""
-        location = os.environ.get(PUBLIC_KEY_PATH_VARIABLE)
-        issuer = os.environ.get(OIDC_ISSUER_VARIABLE)
-        if not location:
-            return cls(oidc_issuer=issuer)
-
-        path = Path(location)
-        if not path.is_file():
-            raise RuntimeError(f"{PUBLIC_KEY_PATH_VARIABLE} is {location}, which is not a file.")
-        return cls(public_key=path.read_text(), oidc_issuer=issuer)
+        return cls(
+            jwks_url=os.environ.get(JWKS_URL_VARIABLE),
+            region_id=os.environ.get(REGION_ID_VARIABLE),
+        )
 
     @property
     def is_configured(self) -> bool:
-        return bool(self.public_key or self.oidc_issuer)
-
-    @property
-    def uses_jwks(self) -> bool:
-        """Which of the two paths a token takes."""
-        return bool(self.oidc_issuer)
+        return bool(self.jwks_url)
 
     def resolve(self, token: str) -> Identity | None:
         """The identity a valid token carries, or None. Never raises."""
         if not self.is_configured:
             return None
-        decode = self._decode_from_jwks if self.uses_jwks else self._decode_from_public_key
         try:
-            return Identity.from_claims(decode(token))
+            return Identity.from_claims(self._decode(token))
         except (jwt.InvalidTokenError, jwt.PyJWKClientError):
             return None
 
-    def _decode_from_public_key(self, token: str) -> dict:
-        return jwt.decode(token, self.public_key, algorithms=ALGORITHMS, options=DECODE_OPTIONS)
+    def _decode(self, token: str) -> dict:
+        header = jwt.get_unverified_header(token)
+        key_id = header.get("kid")
+        if not isinstance(key_id, str) or header.get("alg") != ALGORITHM:
+            raise jwt.InvalidTokenError("The token names no key, or another algorithm.")
 
-    def _decode_from_jwks(self, token: str) -> dict:
+        issuer = issuer_for_key_id(key_id, self.region_id)
+        if issuer is None:
+            raise jwt.InvalidTokenError(f"No issuer owns the key id {key_id}.")
+
         return jwt.decode(
             token,
-            self._signing_key(token),
-            algorithms=ALGORITHMS,
-            issuer=self.oidc_issuer,
+            self._signing_key(key_id),
+            algorithms=[ALGORITHM],
+            issuer=issuer,
             options=DECODE_OPTIONS,
         )
 
-    def _signing_key(self, token: str):
-        """The key the token's `kid` names, from the issuer's JWKS."""
-        if self._keys is None:
-            self._keys = jwt.PyJWKClient(self._jwks_uri(), lifespan=KEY_LIFESPAN)
-        return self._keys.get_signing_key_from_jwt(token).key
+    def _signing_key(self, key_id: str):
+        """The key the token's `kid` names.
 
-    def _jwks_uri(self) -> str:
-        """Discovery, then the key set.
-
-        Failure raises `PyJWKClientError`, so `resolve` answers 401 while the
-        provider is down rather than serving reads with no key at all.
+        An unknown key id must not make an attacker refetch the key set. A set that
+        cannot be read raises `PyJWKClientError`, so `resolve` answers 401 while the
+        publisher is down rather than letting a call through unverified.
         """
-        url = f"{self.oidc_issuer}{DISCOVERY_PATH}"
-        try:
-            with urllib.request.urlopen(url, timeout=DISCOVERY_TIMEOUT) as response:
-                document = json.loads(response.read())
-        except (urllib.error.URLError, TimeoutError, json.JSONDecodeError) as unreachable:
-            raise jwt.PyJWKClientError(f"{url} could not be read: {unreachable}") from unreachable
+        if self._keys is None:
+            self._keys = jwt.PyJWKClient(self.jwks_url, lifespan=KEY_LIFESPAN)
 
-        uri = document.get("jwks_uri")
-        if not uri:
-            raise jwt.PyJWKClientError(f"{url} carries no jwks_uri")
-        return uri
+        key = jwt.PyJWKClient.match_kid(self._keys.get_signing_keys(), key_id)
+        if key is None or key.algorithm_name != ALGORITHM:
+            raise jwt.InvalidTokenError(f"No {ALGORITHM} key is named {key_id}.")
+
+        return key.key
