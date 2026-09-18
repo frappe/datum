@@ -17,7 +17,6 @@ CENTRAL_ISSUER = "central"
 
 JWKS_URL_VARIABLE = "DATUM_JWKS_URL"
 REGION_ID_VARIABLE = "DATUM_REGION_ID"
-KEY_LIFESPAN = 300
 
 # `aud` names one region's datum, and is the only thing that keeps another region's
 # token out. The machine inside the region is `resource_id`, which `Identity` enforces.
@@ -160,6 +159,6 @@ class TokenVerifier:
         per request. A set that cannot be read raises, and the call is a 401 rather
         than one let through unverified."""
         if self._keys is None:
-            self._keys = jwt.PyJWKClient(self.jwks_url, lifespan=KEY_LIFESPAN)
+            self._keys = jwt.PyJWKClient(self.jwks_url)
 
         return self._keys
