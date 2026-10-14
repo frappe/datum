@@ -144,3 +144,15 @@ def test_closing_drops_the_client_so_a_later_call_reconnects():
 
     assert client.closed is True
     assert provider._client is None
+
+
+def test_the_shared_client_has_no_session(monkeypatch):
+    """ClickHouse refuses concurrent queries in one session, and routes write from many threads."""
+    options = {}
+    monkeypatch.setattr(
+        "clickhouse_connect.get_client", lambda **given: options.update(given) or FakeClient()
+    )
+
+    assert ClickHouseProvider(host="localhost").ping()
+
+    assert options["autogenerate_session_id"] is False

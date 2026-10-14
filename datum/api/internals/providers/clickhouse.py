@@ -31,12 +31,15 @@ class ClickHouseProvider(DatumProvider):
 
     @property
     def client(self):
-        """Connected on first use, so building the provider opens no socket."""
+        """Connected on first use, so building the provider opens no socket. Routes write
+        from the threadpool, and ClickHouse refuses concurrent queries in one session, so
+        the shared client has none."""
         if self._client is None:
             self._client = clickhouse_connect.get_client(
                 **self._connection,
                 connect_timeout=self.timeout,
                 send_receive_timeout=self.timeout,
+                autogenerate_session_id=False,
             )
         return self._client
 
