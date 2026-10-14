@@ -40,7 +40,7 @@ break a health check.
 | -------- | ----------------------------- | ---------------------------------------- |
 | `POST`   | `/v1/ingest`                  | JSON samples in, `{"accepted": n}` out   |
 | `POST`   | `/v1/ingest/remote`           | Prometheus remote write, `204` out       |
-| `POST`   | `/v1/logs/ingest`             | JSON log lines in, `{"accepted": n}` out |
+| `POST`   | `/v1/logs/ingest`             | JSON log lines in, wrapped or a bare array, `{"accepted": n}` out |
 | `POST`   | `/v1/traces`                  | OTLP/HTTP spans in, empty `200` out      |
 | `POST`   | `/v1/resource/add`            | register a machine, or change its status |
 | `PUT`    | `/v1/resource/{id}/status`    | change one machine's status              |
@@ -391,11 +391,41 @@ curl -X POST http://localhost:8000/v1/logs/ingest \
          "attributes": {"queue": "default"}}]}'
 ```
 
-Up to 10,000 lines per batch. `product`, `service`, `level` and `source` must
-match `^[a-zA-Z0-9_./-]{1,200}$`; attribute names must match
+Up to 50,000 lines per batch, enough for a full Fluent Bit chunk. `product`, `service` and `source` must match
+`^[a-zA-Z0-9_./-]{1,200}$`; `level` and attribute names must match
 `^[a-zA-Z_][a-zA-Z0-9_]*$`; one message may be up to 8 KiB. There is no
 `resource_id` field — a smuggled one inside `attributes` is dropped, exactly
 as on the metrics path.
+
+The body may also be a bare array of lines, with no `lines` wrapper. That is
+what Fluent Bit's `http` output sends, one array per chunk:
+
+```ini
+[OUTPUT]
+    Name              http
+    Match             app.*
+    Host              datum.example.com
+    Port              443
+    tls               On
+    URI               /v1/logs/ingest
+    Format            json
+    Json_Date_Key     ts
+    Json_Date_Format  iso8601
+    Header            Authorization Bearer ${DATUM_TOKEN}
+    Retry_Limit       no_limits
+```
+
+A filter before it must turn each record into exactly the fields above, and
+nothing else: a `ts` already in the record would be sent next to the one
+`Json_Date_Key` adds. Fluent Bit drops a whole chunk on a `4xx` other than
+`408` and `429`, so one line that breaks a rule loses every line sent with it.
+Truncate the message and keep names inside their patterns there, and leave out
+an empty `attributes`: Lua encodes an empty table as an array.
+
+Each chunk is one request, and this route takes 12 a minute per token. A
+backlog that needs more is answered `429`, which Fluent Bit retries, so it
+drains at up to 12 chunks a minute. `Retry_Limit` defaults to 1; set it as
+above so a retried chunk is not dropped.
 
 ### Traces
 

@@ -130,3 +130,44 @@ def test_a_log_batch_over_the_cap_is_refused(client):
 def test_a_log_batch_at_the_cap_is_accepted(client):
     lines = [LINE for _ in range(MAX_LOG_BATCH)]
     assert post(client, *lines).status_code == 200
+
+
+def post_bare_array(client, *lines):
+    return client.post("/v1/logs/ingest", json=list(lines))
+
+
+def test_a_bare_array_is_accepted(client, provider):
+    response = post_bare_array(client, LINE, {**LINE, "message": "second"})
+
+    assert response.status_code == 200
+    assert response.json() == {"accepted": 2}
+    assert [row["message"] for row in provider.written] == ["job done", "second"]
+
+
+def test_a_bare_array_writes_the_same_row_as_a_wrapped_batch(client, provider):
+    line = {**LINE, "attributes": {"queue": "default"}}
+    post(client, line)
+    post_bare_array(client, line)
+
+    wrapped, bare = provider.written
+    assert wrapped == bare
+
+
+def test_a_microsecond_timestamp_is_kept(client, provider):
+    response = post_bare_array(client, {**LINE, "ts": "2026-08-05T10:00:00.123456Z"})
+
+    assert response.status_code == 200
+    assert provider.written[0]["ts"].microsecond == 123456
+
+
+def test_an_empty_bare_array_is_refused(client):
+    assert post_bare_array(client).status_code == 422
+
+
+def test_a_bare_array_over_the_cap_is_refused(client):
+    lines = [LINE for _ in range(MAX_LOG_BATCH + 1)]
+    assert post_bare_array(client, *lines).status_code == 422
+
+
+def test_an_unusable_line_in_a_bare_array_is_a_422(client):
+    assert post_bare_array(client, LINE, {**LINE, "level": "not a level"}).status_code == 422
