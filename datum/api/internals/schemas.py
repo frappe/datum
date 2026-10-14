@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 
 from fastapi import Path
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from datum.config.limits import (
     MAX_BATCH,
@@ -103,6 +103,12 @@ class LogLineRequest(BaseModel):
         min_length=1,
         max_length=MAX_LOG_BATCH,
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _wrap_bare_array(cls, body: object) -> object:
+        """Fluent Bit sends lines as a bare array."""
+        return {"lines": body} if isinstance(body, list) else body
 
 
 ResourceStatus = Literal["Active", "Terminated", "Pending"]

@@ -45,10 +45,9 @@ RATE_PERIOD = 60.0
 # overridable per deployment.
 TIMEOUT = 30.0
 
-# Log lines in one write. Higher than the metric batch cap because a Fluent Bit
-# flush packs many lines, but bounded so one oversized flush cannot stream
-# indefinitely into ClickHouse.
-MAX_LOG_BATCH = 10_000
+# Log lines in one write. Must hold a full Fluent Bit chunk: 2 MB, about 34,000
+# of the smallest valid lines. A refused chunk is never delivered.
+MAX_LOG_BATCH = 50_000
 
 # Keys in one log line's `attributes` map. Same reasoning as `MAX_LABELS`: the
 # wire format does not bound it, real producers carry a handful.

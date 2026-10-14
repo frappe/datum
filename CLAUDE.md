@@ -80,6 +80,8 @@ ClickHouse stores them. Readers get them back from ClickHouse directly — datum
   - `api/internals/remote/` — Prometheus remote write v1: snappy off, protobuf out, rows in.
     `decode(body, resource_id)` returns table rows, not `Sample`s. The `_pb2.py` is generated;
     regenerate it rather than editing it, and ruff skips it
+- `fluent-bit/` — `datum.conf` and `datum.lua`, the Fluent Bit filter and output a host includes
+  to ship logs. `tests/test_fluent_bit.py` runs the script under Lua 5.1, which LuaJIT follows.
 - `datum_client/` — what producers import. Standard library only, and it must never import from
   the service.
 - `tests/conftest.py` — a fixed test keypair, a local server publishing the key set, a

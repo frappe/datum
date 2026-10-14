@@ -40,7 +40,7 @@ break a health check.
 | -------- | ----------------------------- | ---------------------------------------- |
 | `POST`   | `/v1/ingest`                  | JSON samples in, `{"accepted": n}` out   |
 | `POST`   | `/v1/ingest/remote`           | Prometheus remote write, `204` out       |
-| `POST`   | `/v1/logs/ingest`             | JSON log lines in, `{"accepted": n}` out |
+| `POST`   | `/v1/logs/ingest`             | JSON log lines in, wrapped or a bare array, `{"accepted": n}` out |
 | `POST`   | `/v1/traces`                  | OTLP/HTTP spans in, empty `200` out      |
 | `POST`   | `/v1/resource/add`            | register a machine, or change its status |
 | `PUT`    | `/v1/resource/{id}/status`    | change one machine's status              |
@@ -391,11 +391,62 @@ curl -X POST http://localhost:8000/v1/logs/ingest \
          "attributes": {"queue": "default"}}]}'
 ```
 
-Up to 10,000 lines per batch. `product`, `service`, `level` and `source` must
-match `^[a-zA-Z0-9_./-]{1,200}$`; attribute names must match
+Up to 50,000 lines per batch, enough for a full Fluent Bit chunk. `product`, `service` and `source` must match
+`^[a-zA-Z0-9_./-]{1,200}$`; `level` and attribute names must match
 `^[a-zA-Z_][a-zA-Z0-9_]*$`; one message may be up to 8 KiB. There is no
 `resource_id` field — a smuggled one inside `attributes` is dropped, exactly
 as on the metrics path.
+
+The body may also be a bare array of lines, with no `lines` wrapper. That is
+what Fluent Bit's `http` output sends, one array per chunk.
+
+#### Shipping logs with Fluent Bit
+
+[`fluent-bit/`](fluent-bit) holds a ready filter and output. Copy `datum.conf`
+and `datum.lua` next to the host's `fluent-bit.conf`: Fluent Bit finds the
+script relative to the main config, not the included one. Then tag inputs
+`datum.*`, name the product, and include it last:
+
+```ini
+[SERVICE]
+    Flush         5
+    storage.path  /var/lib/fluent-bit
+
+[INPUT]
+    Name          systemd
+    Tag           datum.journal
+    Systemd_Filter  _SYSTEMD_UNIT=metal.service
+    DB            /var/lib/fluent-bit/journal.db
+    storage.type  filesystem
+
+[FILTER]
+    Name   modify
+    Match  datum.*
+    Add    product metal
+
+@INCLUDE datum.conf
+```
+
+Set `DATUM_HOST`, `DATUM_PORT`, `DATUM_TLS` (`On` or `Off`) and `DATUM_TOKEN`
+in the service's environment.
+
+`datum.lua` turns any parsed record into a line Datum accepts, because Fluent
+Bit drops a whole chunk on a `4xx` other than `408` and `429`:
+
+| Field | Taken from | When unusable |
+| --- | --- | --- |
+| `message` | `message`, `msg`, `MESSAGE` or `log` | empty; cut to 8 KiB |
+| `level` | `level`, `severity`, `lvl` or journald `PRIORITY` | `info` |
+| `service` | `service`, `SYSLOG_IDENTIFIER` or `_SYSTEMD_UNIT` | `unknown` |
+| `source` | `source`, the tailed file's name or `_SYSTEMD_UNIT` | `unknown` |
+| `product` | `product` | `unknown` |
+| `attributes` | every other scalar field, up to 64 | left out |
+| `ts` | the record's Fluent Bit timestamp | — |
+
+Each chunk is one request, and this route takes 12 a minute per token. A
+backlog that needs more is answered `429`, which Fluent Bit retries, so it
+drains at up to 12 chunks a minute. The output sets `Retry_Limit no_limits`,
+since the default of 1 drops a chunk after one retry.
 
 ### Traces
 
