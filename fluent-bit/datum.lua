@@ -41,9 +41,16 @@ local function log_name(value)
     if value == nil then
         return UNKNOWN
     end
-    local name = tostring(value):match("[^/]+$") or ""
-    name = name:gsub("[^%w_./-]", "_"):sub(1, MAX_NAME_LENGTH)
+    local name = tostring(value):gsub("[^%w_./-]", "_"):sub(1, MAX_NAME_LENGTH)
     return name ~= "" and name or UNKNOWN
+end
+
+local function source_name(record)
+    local source, key = first_present(record, SOURCE_KEYS)
+    if key == "filename" then
+        source = tostring(source):match("[^/]+$")
+    end
+    return log_name(source)
 end
 
 local function identifier(value)
@@ -107,7 +114,7 @@ function datum_line(tag, timestamp, record)
     local line = {
         product = log_name(record.product),
         service = log_name(first_present(record, SERVICE_KEYS)),
-        source = log_name(first_present(record, SOURCE_KEYS)),
+        source = source_name(record),
         level = level_name(level),
         message = truncate_utf8(message ~= nil and tostring(message) or "", MAX_MESSAGE_BYTES),
         attributes = attributes_of(record, used),

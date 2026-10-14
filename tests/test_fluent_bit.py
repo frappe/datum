@@ -77,6 +77,24 @@ def test_a_tailed_file_is_its_source(datum_line):
     assert line["source"] == "worker.log"
 
 
+def test_slashes_in_explicit_names_are_kept(datum_line):
+    record = {"message": "x", "product": "team_a/api", "service": "web/worker", "source": "a/b.log"}
+
+    _, _, line = convert(datum_line, record)
+
+    assert (line["product"], line["service"], line["source"]) == (
+        "team_a/api",
+        "web/worker",
+        "a/b.log",
+    )
+
+
+def test_a_tailed_directory_with_no_file_name_is_unknown(datum_line):
+    _, _, line = convert(datum_line, {"log": "x", "filename": "/var/log/app/"})
+
+    assert line["source"] == "unknown"
+
+
 @pytest.mark.parametrize("level", ["not a level", "", "9lives", "x" * 201])
 def test_an_unusable_level_falls_back_to_info(datum_line, level):
     _, _, line = convert(datum_line, {"message": "x", "level": level})
