@@ -139,7 +139,7 @@ class TokenVerifier:
                 return None
 
             # An unknown key id must not make an attacker refetch the key set.
-            signing_key = jwt.PyJWKClient.match_kid(self.jwks_client().get_signing_keys(), key_id)
+            signing_key = jwt.PyJWKClient.match_kid(self.signing_keys(), key_id)
             if signing_key is None or signing_key.algorithm_name != ALGORITHM:
                 return None
 
@@ -153,6 +153,20 @@ class TokenVerifier:
             )
         except (jwt.PyJWTError, jwt.PyJWKClientError):
             return None
+
+    def signing_keys(self) -> list[jwt.PyJWK]:
+        """The key set. While it cannot be fetched, the last set read is kept for one
+        more cache lifespan, so an issuer outage does not turn every token into a 401."""
+        client = self.jwks_client()
+        try:
+            return client.get_signing_keys()
+        except jwt.PyJWKClientConnectionError:
+            last = client.jwk_set_cache.jwk_set_with_timestamp
+            if last is None:
+                raise
+
+            client.jwk_set_cache.put(last.get_jwk_set())
+            return client.get_signing_keys()
 
     def jwks_client(self) -> jwt.PyJWKClient:
         """One key set client per verifier: it caches the keys, so nothing refetches

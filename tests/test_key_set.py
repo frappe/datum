@@ -4,13 +4,25 @@ Served by a real local HTTP server rather than a mock, so the fetch and the JWKS
 parsing are actually exercised.
 """
 
+import threading
 import time
+from http.server import HTTPServer
 
 import jwt
 
 from datum.api.internals import TokenVerifier
 from datum.api.internals.auth import JWKS_URL_VARIABLE, REGION_ID_VARIABLE, issuer_for_key_id
-from tests.conftest import CLAIMS, IDENTITY, JWKS_URL, KEY_ID, REGION_ID, mint, serve, tamper
+from tests.conftest import (
+    CLAIMS,
+    IDENTITY,
+    JWKS_URL,
+    KEY_ID,
+    REGION_ID,
+    Publisher,
+    mint,
+    serve,
+    tamper,
+)
 
 
 def verifier() -> TokenVerifier:
@@ -39,6 +51,21 @@ def test_the_key_set_is_fetched_once_and_reused():
 def test_an_unreachable_key_set_is_a_401_not_a_crash():
     """While the publisher is down, calls are refused rather than let through."""
     assert TokenVerifier(jwks_url="http://127.0.0.1:1/keys").resolve("anything") is None
+
+
+def test_the_last_key_set_is_kept_while_the_publisher_is_down():
+    publisher = HTTPServer(("127.0.0.1", 0), Publisher)
+    threading.Thread(target=publisher.serve_forever, daemon=True).start()
+    kept = TokenVerifier(
+        jwks_url=f"http://127.0.0.1:{publisher.server_port}/keys", region_id=REGION_ID
+    )
+    assert kept.resolve(mint()) == IDENTITY
+
+    publisher.shutdown()
+    publisher.server_close()
+    kept.jwks_client().jwk_set_cache.jwk_set_with_timestamp.timestamp -= 3600
+
+    assert kept.resolve(mint()) == IDENTITY
 
 
 def test_a_key_set_that_answers_404_is_refused():
