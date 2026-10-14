@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import threading
 from dataclasses import dataclass
 
 import jwt
@@ -93,6 +94,9 @@ class TokenVerifier:
         self.jwks_url = (jwks_url or "").strip()
         self.region_id = (region_id or "").strip()
         self._keys: jwt.PyJWKClient | None = None
+        # Routes run in a threadpool. One refresh at a time keeps a failed one
+        # from putting the last set back over a set that another just fetched.
+        self._refresh_lock = threading.Lock()
 
     @classmethod
     def from_env(cls) -> TokenVerifier:
@@ -158,15 +162,16 @@ class TokenVerifier:
         """The key set. While it cannot be fetched, the last set read is kept for one
         more cache lifespan, so an issuer outage does not turn every token into a 401."""
         client = self.jwks_client()
-        try:
-            return client.get_signing_keys()
-        except jwt.PyJWKClientConnectionError:
-            last = client.jwk_set_cache.jwk_set_with_timestamp
-            if last is None:
-                raise
+        with self._refresh_lock:
+            try:
+                return client.get_signing_keys()
+            except jwt.PyJWKClientConnectionError:
+                last = client.jwk_set_cache.jwk_set_with_timestamp
+                if last is None:
+                    raise
 
-            client.jwk_set_cache.put(last.get_jwk_set())
-            return client.get_signing_keys()
+                client.jwk_set_cache.put(last.get_jwk_set())
+                return client.get_signing_keys()
 
     def jwks_client(self) -> jwt.PyJWKClient:
         """One key set client per verifier: it caches the keys, so nothing refetches
