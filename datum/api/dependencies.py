@@ -52,13 +52,6 @@ def rate_limit(limit: int = MAX_REQUESTS, period: float = RATE_PERIOD):
     return Depends(spend)
 
 
-def get_admin(identity: Caller) -> Identity:
-    """Speaks for the fleet, not for one machine. Only an admin touches resources."""
-    if not identity.is_admin:
-        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Token is not an admin.")
-    return identity
-
-
 def get_writer(identity: Caller) -> str:
     """The resource id stamped on every written row."""
     if not identity.can_write:
