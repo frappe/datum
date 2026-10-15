@@ -7,10 +7,8 @@ from dataclasses import dataclass
 import jwt
 
 ACCESS_CLAIM = "access"
-ADMIN_CLAIM = "admin"
 WRITE = "write"
 
-ADMIN_CALLER = "admin"
 # Every key on the merged set is Ed25519. Pinning the algorithm keeps a token from
 # naming a weaker one and being verified against a key meant for this.
 ALGORITHM = "EdDSA"
@@ -34,12 +32,6 @@ class Identity:
 
     resource_id: str = ""
     access: frozenset[str] = frozenset()
-    is_admin: bool = False
-
-    @property
-    def caller(self) -> str:
-        """Admins share one budget: they name no resource."""
-        return ADMIN_CALLER if self.is_admin else self.resource_id
 
     @property
     def can_write(self) -> bool:
@@ -48,11 +40,9 @@ class Identity:
 
     @classmethod
     def from_claims(cls, claims: dict) -> Identity | None:
-        """A machine names itself; an admin names the fleet, so it may carry none."""
+        """A token names the machine it speaks for, or it is no identity at all."""
         resource_id = claims.get("resource_id")
-        is_admin = claims.get(ADMIN_CLAIM) is True
-
-        if not resource_id and not is_admin:
+        if not resource_id:
             return None
 
         access = claims.get(ACCESS_CLAIM) or ()
@@ -61,9 +51,8 @@ class Identity:
             access = access.split()
 
         return cls(
-            resource_id=str(resource_id or ""),
+            resource_id=str(resource_id),
             access=frozenset(str(entry) for entry in access),
-            is_admin=is_admin,
         )
 
 

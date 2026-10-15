@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Annotated, Literal
 
-from fastapi import Path
 from pydantic import BaseModel, Field, field_validator
 
 from datum.config.limits import (
@@ -13,7 +11,6 @@ from datum.config.limits import (
     MAX_LOG_ATTRIBUTES,
     MAX_LOG_BATCH,
     MAX_LOG_MESSAGE,
-    MAX_RESOURCE_ID,
 )
 
 NAME = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
@@ -103,25 +100,3 @@ class LogLineRequest(BaseModel):
         min_length=1,
         max_length=MAX_LOG_BATCH,
     )
-
-
-ResourceStatus = Literal["Active", "Terminated", "Pending"]
-TERMINATED: ResourceStatus = "Terminated"
-
-
-class Resource(BaseModel):
-    """Unlike a sample, the id comes from the body: an admin speaks for the fleet."""
-
-    resource_id: str = Field(min_length=1, max_length=MAX_RESOURCE_ID)
-    status: ResourceStatus
-
-
-class ResourceUpdate(BaseModel):
-    status: ResourceStatus
-
-
-class ResourceResponse(BaseModel):
-    accepted: int
-
-
-ResourceId = Annotated[str, Path(min_length=1, max_length=MAX_RESOURCE_ID)]

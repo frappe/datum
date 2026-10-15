@@ -33,9 +33,6 @@ MAX_RESOURCE_ATTRIBUTES = 8 * 1024
 # lands in a Map cell, which is read whole whenever the column is touched.
 MAX_ATTRIBUTE = 8 * 1024
 
-# Characters in a resource_id. Not a metric name, so the NAME rule does not apply.
-MAX_RESOURCE_ID = 200
-
 # Requests one tenant may make to one path per period, counted in memory by a
 # single worker.
 MAX_REQUESTS = 300
