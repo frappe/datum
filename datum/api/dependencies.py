@@ -40,7 +40,7 @@ def rate_limit(limit: int = MAX_REQUESTS, period: float = RATE_PERIOD):
     def spend(request: Request, identity: Caller) -> None:
         route = request.scope["route"].path
         retry_after = request.app.state.limiter.get_retry_after(
-            identity.caller, route, limit, period
+            identity.resource_id, route, limit, period
         )
         if retry_after:
             raise HTTPException(
@@ -67,5 +67,4 @@ def get_writer(identity: Caller) -> str:
 
 
 Provider = Annotated[DatumProvider, Depends(get_provider)]
-Admin = Annotated[Identity, Depends(get_admin)]
 Writer = Annotated[str, Depends(get_writer)]

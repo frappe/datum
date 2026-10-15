@@ -233,15 +233,6 @@ def test_the_datum_password_is_held_to_the_same_rule(client):
         apply(DATUM_PASSWORD="pa;ss")
 
 
-def test_the_resources_version_column_resolves_below_a_second():
-    """DateTime ties two writes in the same second, so ReplacingMergeTree picks
-    arbitrarily and readers can see stale status."""
-    schema = (migrations.DIRECTORY / "001_init_schema.sql").read_text()
-
-    assert "updated_at  DateTime64(3, 'UTC') DEFAULT now64(3)" in schema
-    assert "ReplacingMergeTree(updated_at)" in schema
-
-
 def test_log_stats_follow_the_logs_table_and_are_filled_by_a_view():
     """The view watches `logs`; without it daily_log_stats would stay empty."""
     names = [path.name for path in migrations.get_migrations()]

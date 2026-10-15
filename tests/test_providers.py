@@ -9,7 +9,7 @@ from datum.api.internals.providers import (
     ProviderError,
     QueryRefused,
 )
-from datum.api.routes.v1 import ingest, resource
+from datum.api.routes.v1 import ingest
 
 
 class FakeClient:
@@ -84,27 +84,6 @@ def test_a_batch_is_written_in_the_column_order_it_was_given():
     assert data == [[ROW["ts"], "cpu", "acme", {"region": "ap_south_1"}, 12.5]]
 
 
-def test_the_caller_names_the_table_not_the_provider():
-    client = FakeClient()
-    provider = build(client)
-
-    provider.insert(ingest.TABLE, [ROW], ingest.COLUMNS)
-    resource.write(provider, "vm-1", "Active")
-
-    assert [insert[0] for insert in client.inserts] == ["samples", "resources"]
-
-
-def test_a_resource_row_carries_only_its_two_columns():
-    """`updated_at` defaults to now(): it is the ReplacingMergeTree version."""
-    client = FakeClient()
-
-    resource.write(build(client), "vm-1", "Terminated")
-
-    _, data, columns, _ = client.inserts[0]
-    assert columns == ["resource_id", "status"]
-    assert data == [["vm-1", "Terminated"]]
-
-
 def test_an_empty_batch_touches_the_store_not_at_all():
     client = FakeClient()
 
@@ -120,10 +99,10 @@ def test_an_unreachable_store_is_not_a_refusal():
 
 
 def test_a_refused_write_is_the_callers_fault():
-    client = FakeClient(error=DatabaseError("Unknown element 'Nonsense' for enum"))
+    client = FakeClient(error=DatabaseError("Cannot parse input: expected Float64"))
 
     with pytest.raises(QueryRefused, match="refused"):
-        resource.write(build(client), "vm-1", "Nonsense")
+        build(client).insert(ingest.TABLE, [ROW], ingest.COLUMNS)
 
 
 def test_ping_answers_true_when_the_store_is_up():

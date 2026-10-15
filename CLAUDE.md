@@ -13,7 +13,7 @@ ClickHouse stores them. Readers get them back from ClickHouse directly — datum
 - **A provider carries no logic.** It writes the rows it is handed into the table it is named,
   and answers whether the store is up. Nothing else. Routes depend on `DatumProvider`
   directly, with no facade in between.
-- **Routes name their own table and columns.** `ingest.py`, `logs.py` and `resource.py` each
+- **Routes name their own table and columns.** `ingest.py`, `logs.py` and `traces.py` each
   hold a `TABLE` and a `COLUMNS` constant and pass both to `provider.insert(...)`. The provider
   knows no table names at all, so adding a table is a new route constant, not a provider
   change.
@@ -60,7 +60,7 @@ ClickHouse stores them. Readers get them back from ClickHouse directly — datum
     - `limits.py` — every cap on one request, in the order a request meets them
   - `migrations/` — the schema, as plain `.sql` files run in filename order
     - `000_acl.sql` — the `datum` and `insights` users, and their grants
-    - `001_init_schema.sql` — the database, `samples` and `resources`
+    - `001_init_schema.sql` — the database and `samples`
     - `002_ingestion_stats.sql` — `daily_ingestion_stats` plus the materialized view that
       fills it from inserts into `samples`
     - `003_logs.sql` — `logs`, the log lines table
@@ -69,11 +69,11 @@ ClickHouse stores them. Readers get them back from ClickHouse directly — datum
     - `migrations.py` — `datum-migrate`; substitutes the passwords, splits and runs
   - `api/app.py` — `create_app(settings, tokens, provider)`; builds the provider once at
     startup and pings it, so a missing schema fails loudly there
-  - `api/dependencies.py` — `Provider`, `Caller`, `Writer`, `Admin`, `rate_limit`; the gates
+  - `api/dependencies.py` — `Provider`, `Caller`, `Writer`, `rate_limit`; the gates
     on `/v1`
   - `api/limiter.py` — `RateLimiter`; counts requests, holds no policy
   - `api/errors.py` — every failure a caller can cause, mapped to its status
-  - `api/routes/v1/` — `ingest.py`, `logs.py` and `resource.py`, mounted in `v1/__init__.py`
+  - `api/routes/v1/` — `ingest.py`, `logs.py` and `traces.py`, mounted in `v1/__init__.py`
   - `api/internals/schemas.py` — the published wire contract, and `Sample.get_row`
   - `api/internals/auth.py` — `Identity`, `TokenVerifier`; JWT signature checking
   - `api/internals/providers/` — `DatumProvider` and `ClickHouseProvider`
@@ -84,7 +84,7 @@ ClickHouse stores them. Readers get them back from ClickHouse directly — datum
   the service.
 - `tests/conftest.py` — a fixed test keypair, a local server publishing the key set, a
   `FakeProvider`, and authenticated and anonymous clients
-- `tests/` — `test_api.py`, `test_ingest.py`, `test_logs.py`, `test_resource.py`,
+- `tests/` — `test_api.py`, `test_ingest.py`, `test_logs.py`,
   `test_remote_write.py`, `test_providers.py`, `test_migrations.py`, `test_limits.py`,
   `test_limiter.py`, `test_auth.py`, `test_key_set.py`
 
@@ -103,17 +103,11 @@ Insights ───────────────────────�
 
 ## Design Expectations
 
-- **Identity comes from the token, never the request body — except for resources.** The token
-  carries `resource_id`, which datum stamps on every row, and `access`, which must contain
-  `write`. A `resource_id` in the body is dropped, not honoured, and the ingest schema has no
-  field for it. The resource routes are the deliberate exception: an admin speaks for the
-  fleet, so it names the machine it means in the body or the path.
-- **`admin` is a boolean claim, checked with `is True`.** A string `"false"` is truthy, and
-  truthiness here would hand out admin. An admin may carry no `resource_id`; when it does not,
-  `can_write` is false, so it cannot ingest rows with an empty stamp.
-- **A path parameter is bounded by nothing unless the route says so.** `ResourceId` in
-  `resource.py` carries `min_length`/`max_length`; without it, `PUT` and `DELETE` would accept
-  ids that `POST /add` refuses, and a written row is permanent.
+- **Identity comes from the token, never the request body.** The token carries `resource_id`,
+  which datum stamps on every row, and `access`, which must contain `write`. A `resource_id` in
+  the body is dropped, not honoured, and the ingest schema has no field for it. A token naming
+  no `resource_id` is no identity. There is no roster: a valid signature and `aud` are the
+  whole check.
 - One label, not a set. Which team owns a machine, or which cluster it sits in, is Central's to
   answer; putting it on every sample makes it a fact frozen at write time.
 - Signatures are RSA or ECDSA. HMAC is never accepted.
@@ -127,11 +121,10 @@ Insights ───────────────────────�
   cannot be middleware: middleware runs before the token resolves, so it could only key on
   address, and behind the proxy every tenant shares one. A route that asks for no limit is
   unlimited — read the signature. The counts are per worker and in memory, so with two workers
-  the real limit is doubled. `Identity.caller` is the key: admins name no machine, so they
-  share one budget per route.
-- What a token may *do* is asked for by name: a route takes `Writer` or `Admin` as an argument,
+  the real limit is doubled. The token's `resource_id` is the key.
+- What a token may *do* is asked for by name: a route takes `Writer` as an argument,
   visible in the signature, so a route never gets its permissions from somewhere else in the
-  file tree. A new route that asks for neither is authenticated but ungated — read the
+  file tree. A new route that does not ask for it is authenticated but ungated — read the
   signature.
 - A second storage engine is a new file in `providers/` and one changed line in `app.py`. If it
   needs anything else, the seam is wrong and that is the bug to fix.
@@ -143,9 +136,6 @@ Insights ───────────────────────�
 - `samples` is `ORDER BY (resource_id, metric, ts)`. A read that filters on none of those scans
   everything; that is the cost of one wide table, and the right trade for a fleet whose queries
   always name a machine. Datum does not issue those reads, but the migrations shape them.
-- `resources` is `ReplacingMergeTree(updated_at)`, so an insert is also the update: the newest
-  row per `resource_id` wins. `updated_at` is `DateTime64(3)` because whole seconds would tie
-  two changes made in the same second and ClickHouse would keep either one.
 - `daily_ingestion_stats` is fed by a materialized view on `samples`, so datum writes to it
   never. A view only sees inserts made after it exists and does not backfill, so adding one in
   a later migration leaves a gap. `SummingMergeTree` sums on merge, so read it with

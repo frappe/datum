@@ -42,19 +42,15 @@ break a health check.
 | `POST`   | `/v1/ingest/remote`           | Prometheus remote write, `204` out       |
 | `POST`   | `/v1/logs/ingest`             | JSON log lines in, `{"accepted": n}` out |
 | `POST`   | `/v1/traces`                  | OTLP/HTTP spans in, empty `200` out      |
-| `POST`   | `/v1/resource/add`            | register a machine, or change its status |
-| `PUT`    | `/v1/resource/{id}/status`    | change one machine's status              |
-| `DELETE` | `/v1/resource/{id}`           | mark a machine terminated                |
 | `GET`    | `/health`                     | liveness                                 |
 
 Browse them at `/docs`. Raw schema at `/v1/openapi.json`.
 
-The three resource routes need an admin token. The four ingest routes need a
-write token. See [Tokens](#tokens).
+The four ingest routes need a write token. See [Tokens](#tokens).
 
 ## The tables
 
-Six tables and two views, all created by the migrations. Datum writes to four
+Five tables and two views, all created by the migrations. Datum writes to three
 of them; ClickHouse maintains the stats tables by itself.
 
 **`datum.samples`** holds every reading:
@@ -81,24 +77,6 @@ refuses `pid` and friends.
 `resource_id` is a real column rather than a key in `labels`, because it decides
 who a row belongs to, and that has to be a sort key. Every other label stays
 open-ended in the map, so a producer can add one without a migration.
-
-**`datum.resources`** holds the roster of machines:
-
-```sql
-CREATE TABLE datum.resources
-(
-    resource_id String,
-    status      Enum8('Active' = 1, 'Terminated' = 2, 'Pending' = 3),
-    updated_at  DateTime64(3, 'UTC') DEFAULT now64(3)
-)
-ENGINE = ReplacingMergeTree(updated_at)
-ORDER BY (resource_id)
-```
-
-`ReplacingMergeTree` keeps only the newest row per `resource_id`, so writing a
-status is both the insert and the update. `updated_at` is what decides which row
-is newest, which is why it is millisecond precision — with whole seconds, two
-changes in the same second would tie and ClickHouse would pick either one.
 
 **`datum.logs`** holds log lines from the fleet, under the same JWT and the same
 `resource_id` tenant boundary:
@@ -287,7 +265,7 @@ They live in `datum/migrations/` as plain `.sql` files, run in filename order:
 | File | What it does |
 |---|---|
 | `000_acl.sql` | creates the `datum` and `insights` users and grants them |
-| `001_init_schema.sql` | creates the database, `samples` and `resources` |
+| `001_init_schema.sql` | creates the database and `samples` |
 | `002_ingestion_stats.sql` | `daily_ingestion_stats` and the view that fills it |
 | `003_logs.sql` | the `logs` table |
 | `004_log_stats.sql` | `daily_log_stats` and the view that fills it |
@@ -447,33 +425,6 @@ the spans were delivered, and it would never send them again.
 resource attributes is stored as an ordinary attribute; it does not decide
 which machine the row belongs to.
 
-## Managing resources
-
-The roster of machines. These routes need a token with `"admin": true`.
-
-```bash
-curl -X POST http://localhost:8000/v1/resource/add \
-  -H "Authorization: Bearer $ADMIN_JWT" -H "Content-Type: application/json" \
-  -d '{"resource_id": "vm-abc123", "status": "Active"}'
-
-curl -X PUT http://localhost:8000/v1/resource/vm-abc123/status \
-  -H "Authorization: Bearer $ADMIN_JWT" -H "Content-Type: application/json" \
-  -d '{"status": "Pending"}'
-
-curl -X DELETE http://localhost:8000/v1/resource/vm-abc123 \
-  -H "Authorization: Bearer $ADMIN_JWT"
-```
-
-Status is one of `Active`, `Terminated` or `Pending`. Anything else is a 422.
-
-`DELETE` does not remove the row. It sets the status to `Terminated`, because
-the machine's samples outlive it and datum holds no `ALTER` grant to delete
-with.
-
-This is the one place a `resource_id` comes from the request rather than the
-token. An admin speaks for the whole fleet, so it has to name the machine it
-means. Ingest is the opposite: there the token decides, always.
-
 ## Reading data
 
 Not through datum. Point your reader at ClickHouse with its own account:
@@ -533,14 +484,6 @@ A machine's token:
 }
 ```
 
-An admin's token:
-
-```json
-{
-  "admin": true
-}
-```
-
 **`resource_id` says which machine the numbers came from.** It is the only label
 the token carries: one machine, one id. Everything else — which team owns it,
 which cluster it sits in — is Central's to answer, not a label repeated on every
@@ -552,12 +495,6 @@ and enrolment tokens with the same key; without this, any of them would be
 accepted here. Only `write` means anything now. A token carrying `read` keeps
 the claim and is not refused for it, but there is nothing here to read.
 
-**`admin: true` is what the resource routes need.** It must be the JSON boolean,
-not the string `"true"` — a string would make any non-empty value an admin. An
-admin speaks for the fleet rather than one machine, so it may carry no
-`resource_id` at all. If it carries none it also cannot ingest, since there
-would be nothing to stamp on the rows.
-
 Signatures must be RSA or ECDSA. HMAC is never accepted.
 
 ## What each status means
@@ -567,8 +504,8 @@ Signatures must be RSA or ECDSA. HMAC is never accepted.
 | 200 | stored |
 | 204 | stored, via remote write |
 | 400 | ClickHouse refused the write, or the remote write body was unreadable |
-| 401 | JWT missing, unsigned, expired, signed by the wrong key, or naming no `resource_id` when it is not an admin |
-| 403 | the token may not do that: no `write` for ingest, not an admin for resources |
+| 401 | JWT missing, unsigned, expired, signed by the wrong key, or naming no `resource_id` |
+| 403 | the token may not do that: no `write` for ingest |
 | 413 | decompressing past 12 MB, more than 10,000 samples or series, or a series wider than 64 labels |
 | 415 | remote write v2, which is not read here |
 | 422 | the request body broke the schema |
@@ -597,7 +534,7 @@ and a token's `iss` must equal it, so one key on the set cannot sign as another
 issuer. Keys are cached for 5 minutes. Datum holds no key of its own, so a rotation
 needs nothing deployed here.
 
-The database is always `datum` and the tables are always `samples`, `resources`
+The database is always `datum` and the tables are always `samples`
 and `logs`. They are not configurable: the migrations name them too, and two
 sources of truth would drift.
 
@@ -627,8 +564,6 @@ print(jwt.encode({'exp': int(time.time())+3600,
   'resource_id': 'vm-abc123', 'access': ['write']},
   Path('.dev/central.key').read_text(), algorithm='RS256'))")
 ```
-
-Add `'admin': True` to those claims for a token that may manage resources.
 
 Tokens last an hour. An expired one gives 401 and looks exactly like a wrong
 key, so make a fresh one before hunting for a bug.
