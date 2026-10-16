@@ -1,0 +1,223 @@
+tests:
+  - name: a record becomes a line
+    inputs:
+      - insert_at: datum_line
+        type: log
+        log_fields: {product: metal, service: metald, level: WARN, msg: disk low}
+    outputs:
+      - extract_from: datum_line
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(remove!(., ["ts"]), {"product": "metal", "service": "metald", "source": "unknown", "level": "warn", "message": "disk low"})
+
+  - name: other scalar fields become attributes
+    inputs:
+      - insert_at: datum_line
+        type: vrl
+        source: '. = {"message": "started", "virtual_machine_id": "vm-1", "pid": 42, "nested": {"a": 1}}'
+    outputs:
+      - extract_from: datum_line
+        conditions:
+          - type: vrl
+            source: 'assert_eq!(.attributes, {"virtual_machine_id": "vm-1", "pid": "42"})'
+
+  - name: a journald record is named after its unit
+    inputs:
+      - insert_at: datum_line
+        type: log
+        log_fields: {MESSAGE: listening, PRIORITY: "3", SYSLOG_IDENTIFIER: metald, _SYSTEMD_UNIT: metal.service}
+    outputs:
+      - extract_from: datum_line
+        conditions:
+          - type: vrl
+            source: 'assert_eq!([.service, .source, .level], ["metald", "metal.service", "error"])'
+
+  - name: a tailed file is its source
+    inputs:
+      - insert_at: datum_line
+        type: log
+        log_fields: {message: x, file: /var/log/app/worker.log}
+    outputs:
+      - extract_from: datum_line
+        conditions:
+          - type: vrl
+            source: 'assert_eq!(.source, "worker.log")'
+
+  - name: a tailed directory with no file name is unknown
+    inputs:
+      - insert_at: datum_line
+        type: log
+        log_fields: {message: x, file: /var/log/app/}
+    outputs:
+      - extract_from: datum_line
+        conditions:
+          - type: vrl
+            source: 'assert_eq!(.source, "unknown")'
+
+  - name: slashes in explicit names are kept
+    inputs:
+      - insert_at: datum_line
+        type: log
+        log_fields: {message: x, product: team_a/api, service: web/worker, source: a/b.log}
+    outputs:
+      - extract_from: datum_line
+        conditions:
+          - type: vrl
+            source: 'assert_eq!([.product, .service, .source], ["team_a/api", "web/worker", "a/b.log"])'
+
+  - name: an unusable level falls back to info
+    inputs:
+      - insert_at: datum_line
+        type: log
+        log_fields: {message: x, level: not a level}
+      - insert_at: datum_line
+        type: log
+        log_fields: {message: x, level: ""}
+      - insert_at: datum_line
+        type: log
+        log_fields: {message: x, level: 9lives}
+      - insert_at: datum_line
+        type: vrl
+        source: |
+          s = "x"
+          for_each([1, 1, 1, 1, 1, 1, 1, 1]) -> |_i, _v| { s = s + s }
+          . = {"message": "x", "level": slice!(s, 0, 201)}
+    outputs:
+      - extract_from: datum_line
+        conditions:
+          - type: vrl
+            source: 'assert_eq!(.level, "info")'
+
+  - name: names are made storable
+    inputs:
+      - insert_at: datum_line
+        type: vrl
+        source: '. = {"message": "x", "product": "my product", "service": "web worker!", "1st key": "v"}'
+    outputs:
+      - extract_from: datum_line
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!([.product, .service], ["my_product", "web_worker_"])
+              assert_eq!(.attributes, {"_1st_key": "v"})
+
+  - name: a long message is cut to datum's character cap
+    inputs:
+      - insert_at: datum_line
+        type: vrl
+        source: |
+          s = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          for_each([1, 1, 1, 1, 1, 1, 1, 1]) -> |_i, _v| { s = s + s }
+          .message = slice!(s, 0, 8191) + "éééééééééé"
+    outputs:
+      - extract_from: datum_line
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(strlen(string!(.message)), 8192)
+              assert!(ends_with(string!(.message), "aé"))
+
+  - name: attributes stop at the cap
+    inputs:
+      - insert_at: datum_line
+        type: vrl
+        source: |
+          . = {"message": "x"}
+          n = 0
+          for_each(split("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "")) -> |_i, _c| {
+            . = set!(., ["key_" + to_string(n)], "v")
+            n = n + 1
+          }
+    outputs:
+      - extract_from: datum_line
+        conditions:
+          - type: vrl
+            source: 'assert_eq!(length!(.attributes), 64)'
+
+  - name: every line is valid for datum
+    inputs:
+      - insert_at: datum_line
+        type: vrl
+        source: '. = {}'
+      - insert_at: datum_line
+        type: vrl
+        source: '. = {"message": 12, "level": 6}'
+      - insert_at: datum_line
+        type: vrl
+        source: |
+          s = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+          for_each([1, 1, 1, 1, 1, 1, 1, 1]) -> |_i, _v| { s = s + s }
+          . = {"MESSAGE": s, "PRIORITY": "7", "_SYSTEMD_UNIT": "a b.service"}
+      - insert_at: datum_line
+        type: vrl
+        source: '. = {"log": "x", "product": "", "service": "/", "file": "dir/"}'
+      - insert_at: datum_line
+        type: vrl
+        source: |
+          . = {"msg": "x", "level": "ERR OR"}
+          n = 0
+          for_each(split("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "")) -> |_i, _c| {
+            . = set!(., ["k" + to_string(n)], n)
+            n = n + 1
+          }
+    outputs:
+      - extract_from: datum_line
+        conditions:
+          - type: vrl
+            source: |
+              for_each([.product, .service, .source]) -> |_i, name| { assert!(match(string!(name), r'^[a-zA-Z0-9_./-]{1,200}$')) }
+              assert!(match(string!(.level), r'^[a-zA-Z_][a-zA-Z0-9_]*$'))
+              assert!(strlen(string!(.message)) <= 8192)
+              assert!(length(object(.attributes) ?? {}) <= 64)
+              assert!(is_timestamp(.ts))
+              for_each(object(.attributes) ?? {}) -> |key, value| {
+                assert!(match(key, r'^[a-zA-Z_][a-zA-Z0-9_]*$'))
+                assert!(is_string(value))
+              }
+              true
+
+  - name: empty attribute keys are skipped and sanitized collisions stay valid
+    inputs:
+      - insert_at: datum_line
+        type: vrl
+        source: '. = {"": "empty", "a b": 1, "a-b": 2, "1key": true}'
+    outputs:
+      - extract_from: datum_line
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(length!(.attributes), 2)
+              assert_eq!(.attributes._1key, "true")
+              assert!(is_string(.attributes.a_b))
+
+  - name: an explicit timestamp keeps its instant and timezone offset
+    inputs:
+      - insert_at: datum_line
+        type: vrl
+        source: '. = {"timestamp": "2026-10-14T10:00:00.123+05:30"}'
+    outputs:
+      - extract_from: datum_line
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.ts, t'2026-10-14T04:30:00.123Z')
+
+  - name: invalid missing and out of range timestamps become processing time
+    inputs:
+      - insert_at: datum_line
+        type: vrl
+        source: '. = {"timestamp": "not a time"}'
+      - insert_at: datum_line
+        type: vrl
+        source: '. = {}'
+      - insert_at: datum_line
+        type: vrl
+        source: '. = {"timestamp": "0000-01-01T00:00:00Z"}'
+    outputs:
+      - extract_from: datum_line
+        conditions:
+          - type: vrl
+            source: |
+              assert!(is_timestamp(.ts))
+              assert_eq!(format_timestamp!(.ts, "%F"), format_timestamp!(now(), "%F"))
