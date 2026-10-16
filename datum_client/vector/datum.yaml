@@ -1,0 +1,84 @@
+secret:
+  datum:
+    type: directory
+    path: ./datum
+    remove_trailing_whitespace: true
+
+transforms:
+  datum_line:
+    type: remap
+    inputs: ["*_to_datum"]
+    source: |
+      # Every Vector log event has a message, so an empty one counts as missing.
+      message = del(.message)
+      if message == null || message == "" { message = del(.msg) }
+      if message == null || message == "" { message = del(.MESSAGE) }
+      if message == null || message == "" { message = del(.log) }
+
+      level = del(.level)
+      if level == null { level = del(.severity) }
+      if level == null { level = del(.lvl) }
+      if level == null { level = del(.PRIORITY) }
+      level = downcase(to_string(level) ?? "")
+      syslog = {"0": "emerg", "1": "alert", "2": "crit", "3": "error", "4": "warning", "5": "notice", "6": "info", "7": "debug"}
+      level = string(get!(syslog, [level])) ?? level
+      if !match(level, r'^[A-Za-z_][A-Za-z0-9_]{0,199}$') { level = "info" }
+
+      service = del(.service)
+      if service == null { service = .SYSLOG_IDENTIFIER }
+      if service == null { service = ._SYSTEMD_UNIT }
+      source = del(.source)
+      if source == null && .file != null { source = replace(to_string(.file) ?? "", r'^.*/', "") }
+      if source == null { source = ._SYSTEMD_UNIT }
+
+      names = map_values({"product": del(.product), "service": service, "source": source}) -> |value| {
+        name = truncate(replace(to_string(value) ?? "", r'[^A-Za-z0-9_./-]', "_"), 200)
+        if name == "" { "unknown" } else { name }
+      }
+
+      ts = del(.timestamp)
+      if !is_timestamp(ts) { ts = parse_timestamp(ts, "%+") ?? now() }
+      year = format_timestamp!(ts, "%Y")
+      if !match(year, r'^[0-9]{4}$') || year == "0000" { ts = now() }
+      del(.ts)
+      del(.host)
+      del(.source_type)
+      attributes = {}
+      for_each(object(.)) -> |key, value| {
+        name = replace(key, r'[^A-Za-z0-9_]', "_")
+        if match(name, r'^[0-9]') { name = "_" + name }
+        name = truncate(name, 200)
+        scalar = is_string(value) || is_integer(value) || is_float(value) || is_boolean(value)
+        if scalar && name != "" && length(attributes) < 64 && get!(attributes, [name]) == null {
+          attributes = set!(attributes, [name], to_string!(value))
+        }
+      }
+
+      . = merge(names, {"ts": ts, "level": level, "message": truncate(to_string(message) ?? "", 8192)})
+      if length(attributes) > 0 { .attributes = attributes }
+
+sinks:
+  datum:
+    type: http
+    inputs: [datum_line]
+    healthcheck:
+      enabled: false
+    uri: SECRET[datum.endpoint]/v1/logs/ingest
+    auth:
+      strategy: bearer
+      token: SECRET[datum.token]
+    encoding:
+      codec: json
+    payload_prefix: '{"lines":'
+    payload_suffix: "}"
+    batch:
+      max_events: 10000
+      max_bytes: 262144
+      timeout_secs: 5
+    request:
+      concurrency: 1
+      rate_limit_num: 12
+      rate_limit_duration_secs: 60
+    # Acknowledgements keep file checkpoints behind unaccepted memory-buffered events.
+    acknowledgements:
+      enabled: true
