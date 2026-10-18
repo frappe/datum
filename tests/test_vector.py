@@ -184,3 +184,92 @@ transforms:
         receiver.shutdown()
         receiver.server_close()
         worker.join()
+
+
+def test_file_source_replays_unaccepted_records_after_restart(tmp_path, vector_binary):
+    expected = {f"recovery line {index}" for index in range(100)}
+    rejected = set()
+    accepted = set()
+    rejected_batch = threading.Event()
+    recovered = threading.Event()
+    accepting = threading.Event()
+
+    class Receiver(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = self.rfile.read(int(self.headers["Content-Length"]))
+            messages = {line.message for line in LogLineRequest.model_validate_json(body).lines}
+            if accepting.is_set():
+                accepted.update(messages)
+                status = 200
+            else:
+                rejected.update(messages)
+                status = 503
+            self.send_response(status)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            if status == 503:
+                rejected_batch.set()
+            elif expected <= accepted:
+                recovered.set()
+
+        def log_message(self, *args):
+            pass
+
+    receiver = ThreadingHTTPServer(("127.0.0.1", 0), Receiver)
+    worker = threading.Thread(target=receiver.serve_forever, daemon=True)
+    worker.start()
+    process = None
+    try:
+        vector.install(tmp_path, endpoint=f"http://127.0.0.1:{receiver.server_port}", token="test")
+        data = tmp_path / "data"
+        data.mkdir()
+        logfile = tmp_path / "app.log"
+        logfile.write_text("".join(message + "\n" for message in sorted(expected)))
+        original = logfile.read_bytes()
+        (tmp_path / "app.yaml").write_text(
+            json.dumps(
+                {
+                    "data_dir": str(data),
+                    "sources": {
+                        "app": {"type": "file", "include": [str(logfile)], "read_from": "beginning"}
+                    },
+                    "transforms": {
+                        "app_to_datum": {"type": "remap", "inputs": ["app"], "source": "."}
+                    },
+                }
+            )
+        )
+        command = [
+            vector_binary,
+            "--threads",
+            "2",
+            "--graceful-shutdown-limit-secs",
+            "2",
+            "--config",
+            "app.yaml",
+            "--config",
+            "datum.yaml",
+        ]
+        with (tmp_path / "vector.log").open("w+") as output:
+            process = subprocess.Popen(command, cwd=tmp_path, stdout=output, stderr=output)
+            assert rejected_batch.wait(20), (tmp_path / "vector.log").read_text()
+            process.terminate()
+            process.wait(timeout=10)
+            assert rejected == expected
+            assert not accepted
+            assert any(path.is_file() for path in data.rglob("*")), "no persisted checkpoint"
+
+            accepting.set()
+            process = subprocess.Popen(command, cwd=tmp_path, stdout=output, stderr=output)
+            assert recovered.wait(20), (tmp_path / "vector.log").read_text()
+            process.terminate()
+            process.wait(timeout=10)
+            assert accepted == expected
+            assert logfile.read_bytes() == original
+    finally:
+        if process is not None and process.poll() is None:
+            process.kill()
+            process.wait(timeout=10)
+        receiver.shutdown()
+        receiver.server_close()
+        worker.join(timeout=5)

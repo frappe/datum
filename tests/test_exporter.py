@@ -5,6 +5,7 @@ import os
 import stat
 import subprocess
 import tarfile
+from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
@@ -297,3 +298,27 @@ def test_cli_validation_uses_absolute_binary_path(tmp_path, monkeypatch):
         == 0
     )
     assert validation.call_args.kwargs["binary"] == tmp_path / "bin/vector"
+
+
+@pytest.mark.parametrize("binary", ["bin/vector", "./vector", Path("bin/vector"), "vector"])
+def test_library_validation_resolves_binary_before_changing_directory(
+    tmp_path, monkeypatch, binary
+):
+    monkeypatch.chdir(tmp_path)
+    executable = tmp_path / ("vector" if binary == "./vector" else "bin/vector")
+    executable.parent.mkdir(exist_ok=True)
+    executable.write_text(
+        '#!/bin/sh\npwd > validation-cwd\nprintf "%s\\n" "$@" > validation-args\n'
+    )
+    executable.chmod(0o755)
+    monkeypatch.setenv("PATH", str(executable.parent) + os.pathsep + os.environ["PATH"])
+
+    config = Config("config/app.yaml").set(["sources"], {})
+    config.save(binary=binary)
+
+    directory = tmp_path / "config"
+    assert Path((directory / "validation-cwd").read_text().strip()).resolve() == directory.resolve()
+    arguments = (directory / "validation-args").read_text().splitlines()
+    assert arguments[:3] == ["validate", "--no-environment", "--resolve-secrets"]
+    assert arguments[-1] == str(directory / "datum.yaml")
+    assert config.path.exists()

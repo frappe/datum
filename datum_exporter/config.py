@@ -124,9 +124,12 @@ def _merge(existing: dict, updates: dict) -> dict:
 
 def validate(directory: str | Path, *, binary: str | Path, app: Path | None = None) -> None:
     directory = Path(directory).expanduser().absolute()
+    binary = os.fspath(binary)
+    if os.path.dirname(binary):
+        binary = str(Path(binary).expanduser().absolute())
     subprocess.run(
         [
-            str(binary),
+            binary,
             "validate",
             "--no-environment",
             "--resolve-secrets",
