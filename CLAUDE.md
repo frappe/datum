@@ -88,8 +88,10 @@ ClickHouse stores them. Readers get them back from ClickHouse directly — datum
   `test_remote_write.py`, `test_providers.py`, `test_migrations.py`, `test_limits.py`,
   `test_limiter.py`, `test_auth.py`, `test_key_set.py`
 
-There is no installer and no systemd unit in this repo. datum-api is one process, run however
+The Datum API has no installer or systemd unit here. datum-api is one process, run however
 the host already runs things; the chef `datum` recipe bakes an image that does it.
+`datum_exporter/` separately manages Vector config, installation and systemd services. Its
+optional YAML dependency does not change the standard-library-only `datum_client` contract.
 
 ## Shape
 

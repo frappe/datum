@@ -10,7 +10,10 @@ install("/etc/my-app/vector", endpoint="https://datum.example.com", token=token)
 
 `install(directory, *, endpoint, token)` returns the installed `datum.yaml` path. It writes that file and `datum/endpoint` and `datum/token` atomically with mode 0600. The secret directory has mode 0700. The endpoint must be an HTTP(S) base URL, without a path, query, fragment or embedded credentials. Invalid arguments leave the installation untouched. Repeating the call replaces the files; replacements are atomic per file, not a transaction across all files. Serialize installation and reload in the application.
 
-Write `app.yaml` next to the installed config:
+For config editing, rootless binary installation and user/system systemd services, use
+the separate [datum_exporter library and CLI](../../datum_exporter/README.md).
+
+To configure Vector manually, write `app.yaml` next to the installed config:
 
 ```yaml
 data_dir: /var/lib/my-app/vector
