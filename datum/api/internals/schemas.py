@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+from typing import Annotated
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 from datum.config.limits import (
     MAX_BATCH,
@@ -95,14 +96,9 @@ class LogLine(BaseModel):
         }
 
 
-class LogLineRequest(BaseModel):
-    lines: list[LogLine] = Field(
-        min_length=1,
-        max_length=MAX_LOG_BATCH,
-    )
+# A batch of lines with no envelope: what Fluent Bit's `Format json` posts, since it cannot wrap one.
+LogLineBatch = Annotated[list[LogLine], Field(min_length=1, max_length=MAX_LOG_BATCH)]
 
-    @model_validator(mode="before")
-    @classmethod
-    def accept_bare_array(cls, data: object) -> object:
-        """Fluent Bit's `Format json` posts a batch as a bare array and cannot wrap it."""
-        return {"lines": data} if isinstance(data, list) else data
+
+class LogLineRequest(BaseModel):
+    lines: LogLineBatch

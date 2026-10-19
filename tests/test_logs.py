@@ -91,6 +91,16 @@ def test_a_bare_array_is_a_batch(client, provider):
     assert {row["resource_id"] for row in provider.written} == {"acme"}
 
 
+def test_the_api_docs_describe_both_shapes(client):
+    body = client.get("/v1/openapi.json").json()["paths"]["/v1/logs/ingest"]["post"]["requestBody"]
+    shapes = body["content"]["application/json"]["schema"]["anyOf"]
+
+    assert {"$ref": "#/components/schemas/LogLineRequest"} in shapes
+    bare = next(shape for shape in shapes if shape.get("type") == "array")
+    assert bare["items"] == {"$ref": "#/components/schemas/LogLine"}
+    assert (bare["minItems"], bare["maxItems"]) == (1, MAX_LOG_BATCH)
+
+
 def test_a_bare_array_has_the_same_caps(client):
     assert client.post("/v1/logs/ingest", json=[]).status_code == 422
     assert client.post("/v1/logs/ingest", json=[LINE] * (MAX_LOG_BATCH + 1)).status_code == 422
