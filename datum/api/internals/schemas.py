@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
+from typing import Annotated
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -95,8 +96,9 @@ class LogLine(BaseModel):
         }
 
 
+# A batch of lines with no envelope: what Fluent Bit's `Format json` posts, since it cannot wrap one.
+LogLineBatch = Annotated[list[LogLine], Field(min_length=1, max_length=MAX_LOG_BATCH)]
+
+
 class LogLineRequest(BaseModel):
-    lines: list[LogLine] = Field(
-        min_length=1,
-        max_length=MAX_LOG_BATCH,
-    )
+    lines: LogLineBatch
