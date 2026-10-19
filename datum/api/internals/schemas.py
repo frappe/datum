@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from datum.config.limits import (
     MAX_BATCH,
@@ -100,3 +100,9 @@ class LogLineRequest(BaseModel):
         min_length=1,
         max_length=MAX_LOG_BATCH,
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_bare_array(cls, data: object) -> object:
+        """Fluent Bit's `Format json` posts a batch as a bare array and cannot wrap it."""
+        return {"lines": data} if isinstance(data, list) else data

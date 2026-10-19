@@ -369,7 +369,10 @@ curl -X POST http://localhost:8000/v1/logs/ingest \
          "attributes": {"queue": "default"}}]}'
 ```
 
-Up to 10,000 lines per batch. `product`, `service`, `level` and `source` must
+The body may also be a bare array of lines, which is what Fluent Bit's `http`
+output sends with `Format json`.
+
+Up to 10,000 lines per batch, either way. `product`, `service`, `level` and `source` must
 match `^[a-zA-Z0-9_./-]{1,200}$`; attribute names must match
 `^[a-zA-Z_][a-zA-Z0-9_]*$`; one message may be up to 8 KiB. There is no
 `resource_id` field — a smuggled one inside `attributes` is dropped, exactly

@@ -81,6 +81,24 @@ def test_an_empty_log_batch_is_refused(client):
     assert client.post("/v1/logs/ingest", json={"lines": []}).status_code == 422
 
 
+def test_a_bare_array_is_a_batch(client, provider):
+    """What Fluent Bit's `Format json` sends: the lines with no envelope."""
+    response = client.post("/v1/logs/ingest", json=[LINE, {**LINE, "message": "next"}])
+
+    assert response.status_code == 200
+    assert response.json() == {"accepted": 2}
+    assert [row["message"] for row in provider.written] == ["job done", "next"]
+    assert {row["resource_id"] for row in provider.written} == {"acme"}
+
+
+def test_a_bare_array_has_the_same_caps(client):
+    assert client.post("/v1/logs/ingest", json=[]).status_code == 422
+    assert client.post("/v1/logs/ingest", json=[LINE] * (MAX_LOG_BATCH + 1)).status_code == 422
+    assert (
+        client.post("/v1/logs/ingest", json=[{**LINE, "level": "not a level"}]).status_code == 422
+    )
+
+
 @pytest.mark.parametrize(
     "line",
     [
