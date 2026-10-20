@@ -352,6 +352,11 @@ to drain.
 
 ### Logs
 
+For file or journal logs, use the [Vector exporter](datum_client/vector/README.md).
+The [exporter library and CLI](datum_exporter/README.md) provide config editing, rootless
+installation and user/system systemd service management.
+It supplies normalization and bounded batches; an app adds its sources and one remap.
+
 Point a log shipper (Fluent Bit, Vector, the OTel collector) at `/v1/logs/ingest`
 with the same `Authorization: Bearer <jwt>` header:
 
