@@ -218,8 +218,9 @@ reason you collected them. A span is one per *request*, so its volume follows
 traffic rather than fleet size — the ClickHouse write-up measures 200 million
 spans a day from a moderate load — and nobody debugs a request from last March.
 
-`samples` keeps 90 days and `logs` 30 days (`007_retention.sql`). The daily stats keep
-the volume of every day.
+`logs` keeps 30 days (`007_retention.sql`). `samples` keeps machine metrics (`system_*`)
+15 days and all other metrics 90 days. `samples_5m` keeps the machine metrics 90 days as one
+row for each 5 minutes (`008_samples_rollup.sql`). The daily stats keep the volume of every day.
 
 ## Setting it up
 
@@ -271,10 +272,14 @@ They live in `datum/migrations/` as plain `.sql` files, run in filename order:
 | `004_log_stats.sql` | `daily_log_stats` and the view that fills it |
 | `005_traces.sql` | the `traces` table |
 | `006_beacon.sql` | what Beacon reads: `samples_recent`, the `latest_value` and `counter_increase` views, and the `beacon` user |
+| `007_retention.sql` | the TTL of `logs` |
+| `008_samples_rollup.sql` | the TTL of `samples`, `samples_5m` and the view that fills it, and the `system_history` view |
 
 Everything is `IF NOT EXISTS`, so running it twice changes nothing. The one insert in `006_beacon.sql` copies the last 2 days of `samples` only on its first run.
 
 `samples_recent` is the last 2 days of `samples` ordered by metric and time, not by resource. Alert rules read one metric across the fleet each minute, and in `samples` that reads every resource. A materialized view fills it, and a TTL empties it. `latest_value(metric, window)` returns the newest value of each series. `counter_increase(metric, window)` returns the growth of each counter series and counts a drop as a reset.
+
+`system_history` has the columns of `samples` and a `peak` column, for the `system_*` metrics only. It returns full resolution for the last 14 days and one row for each 5 minutes before that. For a counter (`_total`), the value is the last sample of the 5 minutes, so its growth stays correct. For a gauge, the value is the average, and `peak` is the highest sample. A chart of a machine metric reads `system_history`, with a filter on `metric` and `ts`. A rule reads `samples_recent`.
 
 `datum-migrate` connects as `default`, because `datum` is the user it is about
 to create. Pass `--default-user-password` if your `default` has one. Creating
