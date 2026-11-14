@@ -168,6 +168,18 @@ class Datum:
             raise ValueError(f"{len(samples)} samples, but a request holds {MAX_SAMPLES}")
         return self._post(samples)
 
+    def send_logs(self, lines: list[dict]) -> int:
+        """Post log lines as one request to `/v1/logs/ingest`, skipping the buffer.
+
+        Each line has `ts`, `product`, `service`, `source`, `level`, `message` and
+        optional `attributes`, as the telemetry contract names them.
+        """
+        if not lines:
+            return 0
+        if len(lines) > MAX_SAMPLES:
+            raise ValueError(f"{len(lines)} lines, but a request holds {MAX_SAMPLES}")
+        return _post_json(f"{self.url}/v1/logs/ingest", {"lines": lines}, self.token, self.timeout)
+
     @property
     def is_due(self) -> bool:
         return (
@@ -211,12 +223,13 @@ def _drain(samples: deque[dict], url: str, token: str, timeout: float) -> None:
 
 
 def _post(samples: list[dict], url: str, token: str, timeout: float) -> int:
+    """One request of samples. Returns datum's status, or 0 if it could not be reached."""
+    return _post_json(f"{url}/v1/ingest", {"samples": samples}, token, timeout)
+
+
+def _post_json(url: str, payload: dict, token: str, timeout: float) -> int:
     """One request. Returns datum's status, or 0 if it could not be reached."""
-    request = urllib.request.Request(
-        f"{url}/v1/ingest",
-        data=json.dumps({"samples": samples}).encode(),
-        method="POST",
-    )
+    request = urllib.request.Request(url, data=json.dumps(payload).encode(), method="POST")
     request.add_header("Content-Type", "application/json")
     request.add_header("Authorization", f"Bearer {token}")
 
