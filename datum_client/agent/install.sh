@@ -396,7 +396,8 @@ set -a
 . /etc/vector/datum.env
 . /etc/vector/role.env
 set +a
-vector validate --no-environment "$config_dir.next"/*.yaml
+# Since 0.59, Vector replaces ${DATUM_ENDPOINT} and ${DATUM_TOKEN} in the configuration only with this flag.
+vector validate --no-environment --dangerously-allow-env-var-interpolation "$config_dir.next"/*.yaml
 rm -rf "$config_dir"
 mv "$config_dir.next" "$config_dir"
 
@@ -410,9 +411,9 @@ StartLimitIntervalSec=0
 EnvironmentFile=/etc/vector/datum.env
 EnvironmentFile=/etc/vector/role.env
 ExecStartPre=
-ExecStartPre=/usr/bin/vector validate --config-dir $config_dir
+ExecStartPre=/usr/bin/vector validate --dangerously-allow-env-var-interpolation --config-dir $config_dir
 ExecStart=
-ExecStart=/usr/bin/vector --config-dir $config_dir
+ExecStart=/usr/bin/vector --dangerously-allow-env-var-interpolation --config-dir $config_dir
 ExecReload=
 ExecReload=/bin/kill -HUP \$MAINPID
 RestartSec=5
