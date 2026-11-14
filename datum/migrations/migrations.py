@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import os
 from pathlib import Path
 from string import Template
@@ -48,14 +47,10 @@ def run_migrations(host: str, port: int, username: str, password: str, **passwor
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="datum-migrate")
-    parser.add_argument("--default-user-password", default="")
-    parser.add_argument("--insights-user-password", required=True)
-    arguments = parser.parse_args()
-
+    """Every setting comes from the environment, so no password shows in the process list."""
     host = os.environ.get("DATUM_CLICKHOUSE_HOST")
     datum_user_password = os.environ.get("DATUM_USER_PASSWORD")
-    # From the environment, not a flag, so a deployer can send it before it runs a Datum that needs it.
+    insights_user_password = os.environ.get("INSIGHTS_USER_PASSWORD")
     beacon_user_password = os.environ.get("BEACON_USER_PASSWORD")
 
     if not host:
@@ -63,6 +58,11 @@ def main() -> None:
 
     if not datum_user_password:
         raise SystemExit("DATUM_USER_PASSWORD is unset. Source the env file first.")
+
+    if not insights_user_password:
+        raise SystemExit(
+            "INSIGHTS_USER_PASSWORD is unset. Set it to the password of the insights user."
+        )
 
     if not beacon_user_password:
         raise SystemExit(
@@ -73,9 +73,9 @@ def main() -> None:
         host=host,
         port=int(os.environ.get("DATUM_CLICKHOUSE_PORT", "8123")),
         username="default",
-        password=arguments.default_user_password,
+        password=os.environ.get("DEFAULT_USER_PASSWORD", ""),
         DATUM_PASSWORD=datum_user_password,
-        INSIGHTS_PASSWORD=arguments.insights_user_password,
+        INSIGHTS_PASSWORD=insights_user_password,
         BEACON_PASSWORD=beacon_user_password,
     )
     for name in applied:

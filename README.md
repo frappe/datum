@@ -247,7 +247,7 @@ ClickHouse users.
 
 ```bash
 set -a && source .dev/datum.env && set +a
-BEACON_USER_PASSWORD='and-another' uv run datum-migrate --insights-user-password 'pick-another-one'
+INSIGHTS_USER_PASSWORD='pick-another-one' BEACON_USER_PASSWORD='and-another' uv run datum-migrate
 ```
 
 `set -a` matters. Plain `source` makes shell variables, which child processes do
@@ -280,7 +280,7 @@ Everything is `IF NOT EXISTS`, so running it twice changes nothing. The one inse
 `system_history` has the columns of `samples` and a `peak` column, for the `system_*` metrics only. It returns full resolution for the last 14 days and one row for each 5 minutes before that. For a counter (`_total`), the value is the last sample of the 5 minutes, so its growth stays correct. For a gauge, the value is the average, and `peak` is the highest sample. A chart of a machine metric reads `system_history`, with a filter on `metric` and `ts`. A rule reads `samples_recent`.
 
 `datum-migrate` connects as `default`, because `datum` is the user it is about
-to create. Pass `--default-user-password` if your `default` has one. Creating
+to create. Set `DEFAULT_USER_PASSWORD` if your `default` has one. Creating
 users needs `access_management` on that account, which a stock ClickHouse does
 not enable — add a `users.d/` drop-in and restart:
 
@@ -290,15 +290,14 @@ not enable — add a `users.d/` drop-in and restart:
 </clickhouse>
 ```
 
-Three passwords go in:
+Three passwords go in, each from the environment, so none shows in the process list:
 
 - **datum's** comes from `DATUM_USER_PASSWORD` in the env file. The
   migration creates the user with it, and the service later connects with it, so
   one value covers both.
-- **insights'** is the `--insights-user-password` flag. Datum never connects as
-  that user, so it is stored nowhere and has to be supplied each run.
-- **beacon's** is `BEACON_USER_PASSWORD`. It is an environment variable and not a
-  flag, so a deployer can send it before it runs a Datum that needs it. The
+- **insights'** is `INSIGHTS_USER_PASSWORD`. Datum never connects as that user,
+  so it is not in the env file and has to be supplied each run.
+- **beacon's** is `BEACON_USER_PASSWORD`, supplied each run for the same reason. The
   `beacon` user can only select, and its `beacon_reader` profile fixes
   `readonly = 2`, a 20 second query limit, 4 GB of memory, 4 threads and
   100,000 result rows, so one slow alert rule cannot take the server.
