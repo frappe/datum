@@ -218,9 +218,9 @@ reason you collected them. A span is one per *request*, so its volume follows
 traffic rather than fleet size — the ClickHouse write-up measures 200 million
 spans a day from a moderate load — and nobody debugs a request from last March.
 
-`logs` keeps 30 days (`007_retention.sql`). `samples` keeps machine metrics (`system_*`)
-15 days and all other metrics 90 days. `samples_5m` keeps the machine metrics 90 days as one
-row for each 5 minutes (`008_samples_rollup.sql`). The daily stats keep the volume of every day.
+`logs` keeps 30 days. `samples` keeps machine metrics (`system_*`) 15 days and all other
+metrics 90 days. `samples_5m` keeps the machine metrics 90 days as one row for each 5 minutes.
+`006_beacon.sql` sets these TTLs. The daily stats keep the volume of every day.
 
 ## Setting it up
 
@@ -271,9 +271,7 @@ They live in `datum/migrations/` as plain `.sql` files, run in filename order:
 | `003_logs.sql` | the `logs` table |
 | `004_log_stats.sql` | `daily_log_stats` and the view that fills it |
 | `005_traces.sql` | the `traces` table |
-| `006_beacon.sql` | what Beacon reads: `samples_recent`, the `latest_value` and `counter_increase` views, and the `beacon` user |
-| `007_retention.sql` | the TTL of `logs` |
-| `008_samples_rollup.sql` | the TTL of `samples`, `samples_5m` and the view that fills it, and the `system_history` view |
+| `006_beacon.sql` | what Beacon reads: `samples_recent`, `samples_5m`, the `latest_value`, `counter_increase` and `system_history` views, and the `beacon` user. It also sets the TTL of `samples` and `logs`. |
 
 Everything is `IF NOT EXISTS`, so running it twice changes nothing. The one insert in `006_beacon.sql` copies the last 2 days of `samples` only on its first run.
 

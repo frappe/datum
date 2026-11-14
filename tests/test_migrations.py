@@ -269,18 +269,12 @@ def test_traces_are_stamped_and_expire():
     assert "INDEX idx_trace_id trace_id TYPE bloom_filter" in sql
 
 
-def test_logs_expire():
-    sql = (migrations.DIRECTORY / "007_retention.sql").read_text()
-
-    assert "ALTER TABLE datum.logs MODIFY TTL toDateTime(ts) + INTERVAL 30 DAY;" in sql
-    assert "datum.samples" not in sql
-
-
 def test_machine_metrics_keep_15_days_raw_and_90_days_as_5_minute_values():
-    sql = (migrations.DIRECTORY / "008_samples_rollup.sql").read_text()
+    sql = (migrations.DIRECTORY / "006_beacon.sql").read_text()
 
     assert "INTERVAL 15 DAY DELETE WHERE startsWith(metric, 'system_')" in sql
     assert "toDateTime(ts) + INTERVAL 90 DAY;" in sql
+    assert "ALTER TABLE datum.logs MODIFY TTL toDateTime(ts) + INTERVAL 30 DAY;" in sql
     assert "CREATE MATERIALIZED VIEW IF NOT EXISTS datum.samples_5m_mv TO datum.samples_5m" in sql
     assert "TTL bucket + INTERVAL 90 DAY" in sql
     assert "CREATE OR REPLACE VIEW datum.system_history" in sql
