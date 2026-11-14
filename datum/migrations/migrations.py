@@ -55,12 +55,19 @@ def main() -> None:
 
     host = os.environ.get("DATUM_CLICKHOUSE_HOST")
     datum_user_password = os.environ.get("DATUM_USER_PASSWORD")
+    # From the environment, not a flag, so a deployer can send it before it runs a Datum that needs it.
+    beacon_user_password = os.environ.get("BEACON_USER_PASSWORD")
 
     if not host:
         raise SystemExit("DATUM_CLICKHOUSE_HOST is unset. Source the env file first.")
 
     if not datum_user_password:
         raise SystemExit("DATUM_USER_PASSWORD is unset. Source the env file first.")
+
+    if not beacon_user_password:
+        raise SystemExit(
+            "BEACON_USER_PASSWORD is unset. Set it to the password of the beacon user."
+        )
 
     applied = run_migrations(
         host=host,
@@ -69,6 +76,7 @@ def main() -> None:
         password=arguments.default_user_password,
         DATUM_PASSWORD=datum_user_password,
         INSIGHTS_PASSWORD=arguments.insights_user_password,
+        BEACON_PASSWORD=beacon_user_password,
     )
     for name in applied:
         print(f"applied {name}")

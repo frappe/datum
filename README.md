@@ -241,12 +241,12 @@ DATUM_REGION_ID=1
 ENV
 ```
 
-**2. Run the migrations.** This creates the database, every table, and both
+**2. Run the migrations.** This creates the database, every table, and the three
 ClickHouse users.
 
 ```bash
 set -a && source .dev/datum.env && set +a
-uv run datum-migrate --insights-user-password 'pick-another-one'
+BEACON_USER_PASSWORD='and-another' uv run datum-migrate --insights-user-password 'pick-another-one'
 ```
 
 `set -a` matters. Plain `source` makes shell variables, which child processes do
@@ -270,8 +270,11 @@ They live in `datum/migrations/` as plain `.sql` files, run in filename order:
 | `003_logs.sql` | the `logs` table |
 | `004_log_stats.sql` | `daily_log_stats` and the view that fills it |
 | `005_traces.sql` | the `traces` table |
+| `006_beacon.sql` | what Beacon reads: `samples_recent`, the `latest_value` and `counter_increase` views, and the `beacon` user |
 
-Everything is `IF NOT EXISTS`, so running it twice changes nothing.
+Everything is `IF NOT EXISTS`, so running it twice changes nothing. The one insert in `006_beacon.sql` copies the last 2 days of `samples` only on its first run.
+
+`samples_recent` is the last 2 days of `samples` ordered by metric and time, not by resource. Alert rules read one metric across the fleet each minute, and in `samples` that reads every resource. A materialized view fills it, and a TTL empties it. `latest_value(metric, window)` returns the newest value of each series. `counter_increase(metric, window)` returns the growth of each counter series and counts a drop as a reset.
 
 `datum-migrate` connects as `default`, because `datum` is the user it is about
 to create. Pass `--default-user-password` if your `default` has one. Creating
@@ -284,15 +287,20 @@ not enable — add a `users.d/` drop-in and restart:
 </clickhouse>
 ```
 
-Two passwords go in:
+Three passwords go in:
 
 - **datum's** comes from `DATUM_USER_PASSWORD` in the env file. The
   migration creates the user with it, and the service later connects with it, so
   one value covers both.
 - **insights'** is the `--insights-user-password` flag. Datum never connects as
   that user, so it is stored nowhere and has to be supplied each run.
+- **beacon's** is `BEACON_USER_PASSWORD`. It is an environment variable and not a
+  flag, so a deployer can send it before it runs a Datum that needs it. The
+  `beacon` user can only select, and its `beacon_reader` profile fixes
+  `readonly = 2`, a 20 second query limit, 4 GB of memory, 4 threads and
+  100,000 result rows, so one slow alert rule cannot take the server.
 
-Neither may contain `'`, `\`, `;`, `--` or a newline. Those characters would
+None may contain `'`, `\`, `;`, `--` or a newline. Those characters would
 change the SQL around them rather than sit inside it, so they are refused up
 front rather than escaped.
 

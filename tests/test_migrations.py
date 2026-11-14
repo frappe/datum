@@ -2,7 +2,11 @@ import pytest
 
 from datum.migrations import migrations
 
-PASSWORDS = {"DATUM_PASSWORD": "pw-datum", "INSIGHTS_PASSWORD": "pw-insights"}
+PASSWORDS = {
+    "DATUM_PASSWORD": "pw-datum",
+    "INSIGHTS_PASSWORD": "pw-insights",
+    "BEACON_PASSWORD": "pw-beacon",
+}
 
 
 class FakeClient:
@@ -29,7 +33,12 @@ def client(monkeypatch):
 @pytest.fixture(autouse=True)
 def no_ambient_environment(monkeypatch):
     """A developer's own env must not decide what a test asserts."""
-    for variable in ("DATUM_CLICKHOUSE_HOST", "DATUM_USER_PASSWORD", "INSIGHTS_PASSWORD"):
+    for variable in (
+        "DATUM_CLICKHOUSE_HOST",
+        "DATUM_USER_PASSWORD",
+        "INSIGHTS_PASSWORD",
+        "BEACON_USER_PASSWORD",
+    ):
         monkeypatch.delenv(variable, raising=False)
 
 
@@ -41,7 +50,8 @@ def apply(**overrides):
 
 def run_cli(monkeypatch, *argv, **environment):
     monkeypatch.setattr("sys.argv", ["datum-migrate", *argv])
-    for variable, value in {"DATUM_CLICKHOUSE_HOST": "clickhouse.local", **environment}.items():
+    defaults = {"DATUM_CLICKHOUSE_HOST": "clickhouse.local", "BEACON_USER_PASSWORD": "pw-beacon"}
+    for variable, value in {**defaults, **environment}.items():
         monkeypatch.setenv(variable, value)
     migrations.main()
 
@@ -257,3 +267,27 @@ def test_traces_are_stamped_and_expire():
     assert "ORDER BY (resource_id, service, ts)" in sql
     assert "TTL toDateTime(ts) + toIntervalDay(7)" in sql
     assert "INDEX idx_trace_id trace_id TYPE bloom_filter" in sql
+
+
+def test_beacon_reads_with_a_limited_select_only_user(client):
+    """Beacon runs rule queries each minute. The profile stops one slow rule before it can take the server."""
+    apply()
+
+    beacon = [command for command in client.commands if "beacon" in command]
+    assert any("IDENTIFIED BY 'pw-beacon'" in command for command in beacon)
+    assert "GRANT SELECT ON datum.* TO beacon" in beacon
+    profile = next(
+        command for command in beacon if "SETTINGS PROFILE IF NOT EXISTS beacon_reader" in command
+    )
+    assert "readonly = 2 CONST" in profile and "max_execution_time = 20 CONST" in profile
+
+
+def test_the_beacon_password_is_required(monkeypatch, client):
+    with pytest.raises(SystemExit, match="BEACON_USER_PASSWORD"):
+        run_cli(
+            monkeypatch,
+            "--insights-user-password",
+            "typed",
+            DATUM_USER_PASSWORD="pw",
+            BEACON_USER_PASSWORD="",
+        )

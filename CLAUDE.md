@@ -17,7 +17,7 @@ ClickHouse stores them. Readers get them back from ClickHouse directly — datum
   hold a `TABLE` and a `COLUMNS` constant and pass both to `provider.insert(...)`. The provider
   knows no table names at all, so adding a table is a new route constant, not a provider
   change.
-- **Datum issues no DDL.** The database, every table and both ClickHouse users are made by
+- **Datum issues no DDL.** The database, every table and all three ClickHouse users are made by
   `datum/migrations/`, run before the service starts. `create_app`'s lifespan pings ClickHouse
   and refuses to start if it cannot answer. Do not add schema creation back into the service:
   two places creating one table is two definitions that drift.
@@ -66,6 +66,9 @@ ClickHouse stores them. Readers get them back from ClickHouse directly — datum
     - `003_logs.sql` — `logs`, the log lines table
     - `004_log_stats.sql` — `daily_log_stats`, the log twin of
       `daily_ingestion_stats`, filled by a view on `logs`
+    - `005_traces.sql` — `traces`
+    - `006_beacon.sql` — `samples_recent` (2 days, ordered by metric), the `latest_value` and
+      `counter_increase` views, and the select-only `beacon` user with its limits profile
     - `migrations.py` — `datum-migrate`; substitutes the passwords, splits and runs
   - `api/app.py` — `create_app(settings, tokens, provider)`; builds the provider once at
     startup and pings it, so a missing schema fails loudly there
