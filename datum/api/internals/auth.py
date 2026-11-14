@@ -13,6 +13,10 @@ WRITE = "write"
 # naming a weaker one and being verified against a key meant for this.
 ALGORITHM = "EdDSA"
 CENTRAL_ISSUER = "central"
+# Each regional issuer signs as `<product>:<region_id>`: Atlas for the machines it runs, Cargo for its services.
+REGIONAL_PRODUCTS = ("atlas", "cargo")
+# The resource of each product's own application. Only the issuer of that product may write as it.
+PRODUCT_RESOURCE_IDS = frozenset({CENTRAL_ISSUER, *REGIONAL_PRODUCTS})
 
 JWKS_URL_VARIABLE = "DATUM_JWKS_URL"
 REGION_ID_VARIABLE = "DATUM_REGION_ID"
@@ -40,9 +44,14 @@ class Identity:
 
     @classmethod
     def from_claims(cls, claims: dict) -> Identity | None:
-        """A token names the machine it speaks for, or it is no identity at all."""
+        """A token names the machine it speaks for, or it is no identity at all. A product's
+        resource, such as `atlas`, is only for a token that its own product signed."""
         resource_id = claims.get("resource_id")
         if not resource_id:
+            return None
+
+        product = str(claims.get("iss") or "").split(":", 1)[0]
+        if resource_id in PRODUCT_RESOURCE_IDS and resource_id != product:
             return None
 
         access = claims.get(ACCESS_CLAIM) or ()
@@ -58,7 +67,9 @@ class Identity:
 
 def issuer_for_key_id(key_id: str, region_id: str = "") -> str | None:
     """The issuer whose key id namespace this is, or None when no issuer claims it."""
-    issuers = [CENTRAL_ISSUER] + ([f"atlas:{region_id}"] if region_id else [])
+    issuers = [CENTRAL_ISSUER] + (
+        [f"{product}:{region_id}" for product in REGIONAL_PRODUCTS] if region_id else []
+    )
     for issuer in issuers:
         if key_id.startswith(f"{issuer}:") and key_id.removeprefix(f"{issuer}:"):
             return issuer
@@ -67,7 +78,7 @@ def issuer_for_key_id(key_id: str, region_id: str = "") -> str | None:
 
 
 class TokenVerifier:
-    """Verifies the JWTs Central mints. Ed25519 only; nothing else is accepted.
+    """Verifies the JWTs that Central, Atlas and Cargo sign. Ed25519 only; nothing else is accepted.
 
     The merged key set at `jwks_url` carries more than one issuer's keys, so a valid
     signature alone does not say who signed. The key id names the issuer, and `iss` is

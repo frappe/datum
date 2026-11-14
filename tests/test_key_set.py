@@ -19,6 +19,7 @@ from tests.conftest import (
     KEY_ID,
     REGION_ID,
     Publisher,
+    jwks,
     mint,
     serve,
     tamper,
@@ -148,10 +149,12 @@ def test_a_token_naming_another_algorithm_is_refused():
 def test_a_key_id_names_the_issuer_that_owns_its_namespace():
     assert issuer_for_key_id("central:abc", REGION_ID) == "central"
     assert issuer_for_key_id(f"atlas:{REGION_ID}:abc", REGION_ID) == f"atlas:{REGION_ID}"
+    assert issuer_for_key_id(f"cargo:{REGION_ID}:abc", REGION_ID) == f"cargo:{REGION_ID}"
 
 
 def test_a_key_id_outside_every_namespace_names_no_issuer():
     assert issuer_for_key_id("atlas:9:abc", REGION_ID) is None
+    assert issuer_for_key_id("cargo:9:abc", REGION_ID) is None
     assert issuer_for_key_id("abc", REGION_ID) is None
     assert issuer_for_key_id("central:", REGION_ID) is None
     assert issuer_for_key_id("central-other:abc", REGION_ID) is None
@@ -161,3 +164,46 @@ def test_the_atlas_namespace_needs_a_region():
     """With no region configured, only Central's keys are usable."""
     assert issuer_for_key_id("atlas:42:abc") is None
     assert issuer_for_key_id("central:abc") == "central"
+
+
+CARGO_KEY_ID = f"cargo:{REGION_ID}:1"
+
+
+class MergedPublisher(Publisher):
+    """The set Cargo publishes: Central's and Atlas's keys, and its own."""
+
+    def do_GET(self):
+        central = jwks()["keys"][0]
+        self._send(
+            {
+                "keys": [
+                    central,
+                    {**central, "kid": f"atlas:{REGION_ID}:1"},
+                    {**central, "kid": CARGO_KEY_ID},
+                ]
+            }
+        )
+
+
+def signed(issuer: str, resource_id: str) -> str:
+    key_id = KEY_ID if issuer == "central" else f"{issuer}:1"
+    return mint({**CLAIMS, "iss": issuer, "resource_id": resource_id}, headers={"kid": key_id})
+
+
+def test_cargo_signs_for_its_own_machines():
+    merged = TokenVerifier(jwks_url=serve(MergedPublisher), region_id=REGION_ID)
+
+    assert (
+        merged.resolve(signed(f"cargo:{REGION_ID}", "vm-storage-1")).resource_id == "vm-storage-1"
+    )
+
+
+def test_only_a_product_writes_as_its_own_resource():
+    merged = TokenVerifier(jwks_url=serve(MergedPublisher), region_id=REGION_ID)
+
+    assert merged.resolve(signed(f"cargo:{REGION_ID}", "cargo")).resource_id == "cargo"
+    assert merged.resolve(signed(f"atlas:{REGION_ID}", "atlas")).resource_id == "atlas"
+    assert merged.resolve(signed("central", "central")).resource_id == "central"
+    assert merged.resolve(signed(f"cargo:{REGION_ID}", "atlas")) is None
+    assert merged.resolve(signed(f"atlas:{REGION_ID}", "central")) is None
+    assert merged.resolve(signed("central", "cargo")) is None

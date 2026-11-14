@@ -237,7 +237,7 @@ DATUM_CLICKHOUSE_HOST=127.0.0.1
 DATUM_CLICKHOUSE_PORT=8123
 DATUM_CLICKHOUSE_USER=datum
 DATUM_USER_PASSWORD=pick-something
-DATUM_JWKS_URL=https://atlas.example.com/api/atlas/jwks.json
+DATUM_JWKS_URL=https://cargo.example.com/api/method/cargo.api.jwks.get_jwks
 DATUM_REGION_ID=1
 ENV
 ```
@@ -488,7 +488,8 @@ the cap rather than after materialising it.
 
 ## Tokens
 
-Every call carries a JWT that Central signed: `Authorization: Bearer <jwt>`.
+Every call carries a JWT that Central, the region's Atlas or the region's Cargo signed:
+`Authorization: Bearer <jwt>`.
 
 A machine's token:
 
@@ -510,7 +511,7 @@ and enrolment tokens with the same key; without this, any of them would be
 accepted here. Only `write` means anything now. A token carrying `read` keeps
 the claim and is not refused for it, but there is nothing here to read.
 
-Signatures must be RSA or ECDSA. HMAC is never accepted.
+Signatures must be Ed25519. HMAC is never accepted.
 
 ## What each status means
 
@@ -558,15 +559,17 @@ Read by both `datum-migrate` and the service.
 | `DATUM_USER_PASSWORD` | required | its password, and what the migration creates that user with |
 | `DATUM_TIMEOUT` | `30` | seconds, connect and execute |
 | `DATUM_JWKS_URL` | none | the merged key set to verify tokens against. Unset, every call is a 401 |
-| `DATUM_REGION_ID` | none | this region, so its Atlas may sign too. Unset, only Central may |
+| `DATUM_REGION_ID` | none | this region, so its Atlas and Cargo may sign too. Unset, only Central may |
 
-The full URL of the key set, not a base to discover one from. Atlas serves it at
-`/api/atlas/jwks.json`, merging Central's published keys with the region's own.
+The full URL of the key set, not a base to discover one from. Atlas serves Central's
+keys and its own at `/api/atlas/jwks.json`. Cargo serves that set and its own key at
+`/api/method/cargo.api.jwks.get_jwks`. The Datum host that Cargo sets up reads Cargo's set.
 
-Ed25519 only. A key id names its issuer -- `central:` or `atlas:<region-id>:` --
+Ed25519 only. A key id names its issuer -- `central:`, `atlas:<region-id>:` or `cargo:<region-id>:` --
 and a token's `iss` must equal it, so one key on the set cannot sign as another
 issuer. Keys are cached for 5 minutes. Datum holds no key of its own, so a rotation
-needs nothing deployed here.
+needs nothing deployed here. The resources `central`, `atlas` and `cargo` are each
+for the token of that product only, so a machine cannot write as one of them.
 
 The database is always `datum` and the tables are always `samples`
 and `logs`. They are not configurable: the migrations name them too, and two
