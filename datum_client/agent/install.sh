@@ -11,6 +11,7 @@
 # ROLE_CONFIG                  The role file. Its transforms are named metrics_* and logs_*. A machine
 #                              with more than one role gives one YAML document for each, split by ---.
 # ROLE_ENVIRONMENT             KEY=VALUE lines that the role file reads, such as a scrape token.
+#                              A role file can also read PRODUCT.
 # DATUM_PROXY                  An HTTP proxy for the writes to Datum.
 
 set -euo pipefail
@@ -57,7 +58,7 @@ if ! grep -q '^DATUM_TOKEN=' /etc/vector/datum.env 2>/dev/null; then
 	echo "/etc/vector/datum.env has no DATUM_TOKEN" >&2
 	exit 1
 fi
-printf '%s\n' "${ROLE_ENVIRONMENT:-}" > /etc/vector/role.env
+printf 'PRODUCT=%s\n%s\n' "$PRODUCT" "${ROLE_ENVIRONMENT:-}" > /etc/vector/role.env
 chgrp vector /etc/vector/datum.env /etc/vector/role.env
 
 yaml_list() {

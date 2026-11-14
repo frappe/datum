@@ -1,6 +1,6 @@
 import subprocess
 
-from datum_client.agent import get_install_script
+from datum_client.agent import get_install_script, get_role_config
 
 # Renders the configuration with the install steps left out, as the script writes it.
 RENDER = """
@@ -73,3 +73,7 @@ def test_each_role_gets_its_own_file(tmp_path):
 
     assert (tmp_path / "role-1.yaml").read_text() == "sources:\n  garage: {}\n"
     assert (tmp_path / "role-2.yaml").read_text() == "sources:\n  nginx: {}\n"
+
+
+def test_a_shared_role_adds_no_sink():
+    assert "sinks:" not in get_role_config("nginx")

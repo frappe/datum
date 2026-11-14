@@ -1,0 +1,59 @@
+# The nginx error log. The access log stays on the machine: metrics count requests.
+sources:
+  nginx_errors:
+    type: file
+    include: [/var/log/nginx/error.log]
+    read_from: end
+
+transforms:
+  logs_nginx:
+    type: remap
+    inputs: [nginx_errors]
+    drop_on_abort: true
+    drop_on_error: true
+    source: |
+      levels = {"warn": "warning", "error": "error", "crit": "critical", "alert": "alert", "emerg": "emergency"}
+      message = string!(.message)
+      parsed = parse_regex!(message, r'^\S+ \S+ \[(?P<level>\w+)\]')
+      level = get(levels, [parsed.level]) ?? null
+      if level == null {
+        abort
+      }
+      # A signed URL works for whoever holds it until it expires.
+      message = replace(message, r'X-Amz-Signature=[^&\s"]+', "X-Amz-Signature=redacted")
+      stamp = .timestamp
+      if !is_timestamp(stamp) {
+        stamp = now()
+      }
+      . = {
+        "ts": format_timestamp!(stamp, "%Y-%m-%dT%H:%M:%S%.3fZ"),
+        "product": "${PRODUCT}",
+        "service": "nginx",
+        "source": "file",
+        "level": level,
+        "message": truncate(message, 8192),
+        "attributes": {},
+      }
+
+tests:
+  - name: an error line keeps its level and loses its signature
+    inputs:
+      - insert_at: logs_nginx
+        type: log
+        log_fields:
+          message: '2026/11/14 10:00:00 [crit] 12#12: *3 connect() failed, request: "GET /b?X-Amz-Signature=abc&x=1"'
+    outputs:
+      - extract_from: logs_nginx
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.level, "critical")
+              assert_eq!(.product, "cargo")
+              assert!(contains(string!(.message), "X-Amz-Signature=redacted&x=1"))
+  - name: a notice line is dropped
+    inputs:
+      - insert_at: logs_nginx
+        type: log
+        log_fields:
+          message: '2026/11/14 10:00:00 [notice] 12#12: signal process started'
+    no_outputs_from: [logs_nginx]
