@@ -6,6 +6,7 @@ from datum_client.agent import get_install_script, get_role_config
 RENDER = """
 {functions}
 write_logs_config
+write_agent_config
 if [ "$SEND_METRICS" = true ]; then write_metrics_config; fi
 """
 
@@ -27,13 +28,14 @@ def test_the_script_is_valid_bash():
     subprocess.run(["bash", "-n"], input=get_install_script(), text=True, check=True)
 
 
-def test_a_host_sends_logs_only_and_the_info_lines_of_its_main_service():
+def test_a_host_sends_logs_the_info_lines_of_its_main_service_and_its_drops():
     config = render(PRODUCT="metal", SEND_METRICS="false", INFO_UNITS="metal.service")
 
     assert 'exclude_units: ["metal.service"]' in config
     assert 'include_units: ["metal.service"]' in config
     assert '"product": "metal"' in config
     assert "host_metrics" not in config
+    assert "datum_agent_dropped_events_total" in config
 
 
 def test_a_role_unit_is_left_to_the_role_file():

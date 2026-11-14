@@ -5,7 +5,8 @@
 # DATUM_ENDPOINT, DATUM_TOKEN  Written to /etc/vector/datum.env. Leave them out when the owner
 #                              writes that file itself.
 # PRODUCT                      The `product` of each log line, such as atlas or cargo.
-# SEND_METRICS                 true or false. A host sets false, because metald sends its metrics.
+# SEND_METRICS                 true or false: the machine metrics. A host sets false, because metald
+#                              sends them. The agent always sends its own dropped events.
 # INFO_UNITS                   systemd units whose info lines are sent too, such as metal.service.
 # ROLE_UNITS                   systemd units that the role file reads itself.
 # ROLE_CONFIG                  The role file. Its transforms are named metrics_* and logs_*. A machine
@@ -266,6 +267,40 @@ transforms:
       .name = name
       .tags = compact(tags)
       del(.namespace)
+VECTOR
+}
+
+# The metric sink, and the events that the agent drops: lines over the log cap, events that a full
+# buffer drops, and events that a transform or a sink loses by error. A role transform that drops a
+# line on purpose, such as an info line, does not count.
+write_agent_config() {
+	cat <<'VECTOR'
+sources:
+  agent_internal:
+    type: internal_metrics
+    scrape_interval_secs: 60
+
+transforms:
+  metrics_agent:
+    type: remap
+    inputs: [agent_internal]
+    drop_on_abort: true
+    drop_on_error: true
+    source: |
+      component = string(.tags.component_id) ?? ""
+      intentional = string(.tags.intentional) ?? ""
+      reason = if .name == "buffer_discarded_events_total" {
+        "buffer_full"
+      } else if .name == "component_discarded_events_total" && component == "capped_logs" {
+        "cap"
+      } else if .name == "component_discarded_events_total" && intentional == "false" {
+        "error"
+      } else {
+        abort
+      }
+      .name = "datum_agent_dropped_events_total"
+      .tags = {"component": component, "reason": reason}
+      del(.namespace)
 
 sinks:
   datum_metrics:
@@ -303,6 +338,7 @@ write_role_files() {
 rm -rf "$config_dir.next"
 install -d -m 750 -g vector "$config_dir.next"
 write_logs_config > "$config_dir.next/logs.yaml"
+write_agent_config > "$config_dir.next/agent.yaml"
 if [ "$SEND_METRICS" = true ]; then
 	write_metrics_config > "$config_dir.next/metrics.yaml"
 fi

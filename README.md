@@ -537,7 +537,9 @@ from `datum_client.agent.get_install_script()` and run it over SSH. Its header l
 variables. `get_role_config()` gives a role file for a program that many machines run, such
 as `nginx` for the nginx error log at `error` and higher. The agent reads the machine metrics each 60 s,
 and sends at most 1,000 log lines per minute for each service; the other lines stay in the local
-journal. Test a role file with `vector test`: each has a `tests:` block.
+journal. It also sends `datum_agent_dropped_events_total{component, reason}`: the events that it
+drops, with `reason` `cap` (over the log cap), `buffer_full` or `error`. A line that a role file
+drops on purpose does not count. Test a role file with `vector test`: each has a `tests:` block.
 
 ## Configuration
 
