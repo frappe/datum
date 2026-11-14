@@ -12,6 +12,8 @@
 #                              with more than one role gives one YAML document for each, split by ---.
 # ROLE_ENVIRONMENT             KEY=VALUE lines that the role file reads, such as a scrape token.
 #                              A role file can also read PRODUCT.
+# LOG_GROUPS                   More groups whose log files a role file reads, such as clickhouse.
+#                              Vector is always in adm, which owns the logs in /var/log, such as nginx.
 # DATUM_PROXY                  An HTTP proxy for the writes to Datum.
 
 set -euo pipefail
@@ -43,7 +45,9 @@ if [ "$(vector --version 2>/dev/null | cut -d' ' -f2)" != "$vector_version" ]; t
 	echo "$expected_sha256  $package" | sha256sum -c --quiet
 	DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$package"
 fi
-usermod -aG systemd-journal vector
+for group in systemd-journal adm ${LOG_GROUPS:-}; do
+	usermod -aG "$group" vector
+done
 
 # The files hold tokens, so only root and Vector can read them.
 umask 027
