@@ -42,7 +42,7 @@ break a health check.
 | `POST`   | `/v1/ingest/remote`           | Prometheus remote write, `204` out       |
 | `POST`   | `/v1/logs/ingest`             | JSON log lines in, `{"accepted": n}` out |
 | `POST`   | `/v1/traces`                  | OTLP/HTTP spans in, empty `200` out      |
-| `GET`    | `/health`                     | liveness                                 |
+| `GET`    | `/health`                     | `200` when ClickHouse answers, else `503` |
 
 Browse them at `/docs`. Raw schema at `/v1/openapi.json`.
 
@@ -218,8 +218,8 @@ reason you collected them. A span is one per *request*, so its volume follows
 traffic rather than fleet size — the ClickHouse write-up measures 200 million
 spans a day from a moderate load — and nobody debugs a request from last March.
 
-`logs` sits between the two and has no TTL today. If its volume starts scaling
-with traffic rather than with machines, it will need one.
+`samples` keeps 90 days and `logs` 30 days (`007_retention.sql`). The daily stats keep
+the volume of every day.
 
 ## Setting it up
 
@@ -380,8 +380,9 @@ curl -X POST http://localhost:8000/v1/logs/ingest \
 The body may also be a bare array of lines, which is what Fluent Bit's `http`
 output sends with `Format json`.
 
-Up to 10,000 lines per batch, either way. `product`, `service`, `level` and `source` must
-match `^[a-zA-Z0-9_./-]{1,200}$`; attribute names must match
+Up to 10,000 lines per batch, either way. `product`, `service` and `source` must
+match `^[a-zA-Z0-9_./-]{1,200}$`; `level` is one of `emergency`, `alert`, `critical`,
+`error`, `warning`, `notice`, `info`, `debug`; attribute names must match
 `^[a-zA-Z_][a-zA-Z0-9_]*$`; one message may be up to 8 KiB. There is no
 `resource_id` field — a smuggled one inside `attributes` is dropped, exactly
 as on the metrics path.
@@ -522,6 +523,18 @@ Signatures must be RSA or ECDSA. HMAC is never accepted.
 | 422 | the request body broke the schema |
 | 429 | too many requests for that route; `Retry-After` says how long |
 | 503 | datum is up, ClickHouse is not |
+
+Each refused `/v1` request writes one JSON line to stderr, with the route, the status and
+the `resource_id` of a valid token as `sender`. The Datum agent sends it to `logs`, so a
+rule can name the sender that loses data.
+
+## The Datum agent
+
+`datum_client/agent/install.sh` installs Vector with the telemetry contract of Beacon
+(`docs/telemetry.md` in the Beacon repository): the machine metrics, the journal lines at
+`warning` and higher, and an optional role file of the owner. Atlas and Cargo get the script
+from `datum_client.agent.get_install_script()` and run it over SSH. Its header lists the
+variables.
 
 ## Configuration
 

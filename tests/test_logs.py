@@ -115,6 +115,8 @@ def test_a_bare_array_has_the_same_caps(client):
         {**LINE, "product": "not a product"},
         {**LINE, "service": "not a service"},
         {**LINE, "level": "not a level"},
+        {**LINE, "level": "warn"},
+        {**LINE, "level": "ERROR"},
         {**LINE, "source": "not a source"},
         {**LINE, "message": 12},
         {"product": "pilot", "service": "worker", "level": "info", "source": "x", "message": "y"},
@@ -158,3 +160,10 @@ def test_a_log_batch_over_the_cap_is_refused(client):
 def test_a_log_batch_at_the_cap_is_accepted(client):
     lines = [LINE for _ in range(MAX_LOG_BATCH)]
     assert post(client, *lines).status_code == 200
+
+
+@pytest.mark.parametrize(
+    "level", ["emergency", "alert", "critical", "error", "warning", "notice", "info", "debug"]
+)
+def test_each_syslog_level_is_accepted(client, level):
+    assert post(client, {**LINE, "level": level}).status_code == 200

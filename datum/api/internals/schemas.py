@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -16,6 +16,8 @@ from datum.config.limits import (
 
 NAME = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 LOG_NAME = re.compile(r"^[a-zA-Z0-9_./-]{1,200}$")
+# The syslog severities, by name. Beacon rules read them, so one spelling for each.
+LogLevel = Literal["emergency", "alert", "critical", "error", "warning", "notice", "info", "debug"]
 
 
 class Sample(BaseModel):
@@ -63,7 +65,7 @@ class LogLine(BaseModel):
     ts: datetime
     product: str = Field(pattern=LOG_NAME.pattern)
     service: str = Field(pattern=LOG_NAME.pattern)
-    level: str = Field(pattern=NAME.pattern)
+    level: LogLevel
     source: str = Field(pattern=LOG_NAME.pattern)
     message: str = Field(max_length=MAX_LOG_MESSAGE)
     attributes: dict[str, str] = Field(

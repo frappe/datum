@@ -269,6 +269,13 @@ def test_traces_are_stamped_and_expire():
     assert "INDEX idx_trace_id trace_id TYPE bloom_filter" in sql
 
 
+def test_samples_and_logs_expire():
+    sql = (migrations.DIRECTORY / "007_retention.sql").read_text()
+
+    assert "ALTER TABLE datum.samples MODIFY TTL toDateTime(ts) + INTERVAL 90 DAY;" in sql
+    assert "ALTER TABLE datum.logs MODIFY TTL toDateTime(ts) + INTERVAL 30 DAY;" in sql
+
+
 def test_beacon_reads_with_a_limited_select_only_user(client):
     """Beacon runs rule queries each minute. The profile stops one slow rule before it can take the server."""
     apply()

@@ -149,10 +149,11 @@ Insights ───────────────────────�
   label becomes hot enough to matter, promote it to a column rather than adding an index.
 - `Delta` on the timestamp and `Gorilla` on the value are doing most of the compression. Do not
   drop the codecs.
-- `traces` is the only table with a TTL, at 7 days, and it drops whole parts only. Nothing
-  else expires: a sample is small and its history is the point, so cardinality there is a
-  permanent cost, not one retention eventually clears. A TTL belongs on a table whose volume
-  follows traffic rather than fleet size, which is spans and not metrics.
+- Retention: `samples` 90 days, `logs` 30 days, `traces` 7 days, `samples_recent` 2 days.
+  The daily stats never expire. Cardinality still costs for 90 days, so keep labels few.
+- Log levels are the eight syslog names. The telemetry contract in Beacon's
+  `docs/telemetry.md` sets the names, labels and log fields that every producer uses; the
+  Datum agent in `datum_client/agent/` is its one implementation for machines.
 - Losing ClickHouse loses in-flight data. That is accepted. There is no queue, no spool file
   and no retry, because blocking a producer's collection tick is worse than a gap in a chart.
 
