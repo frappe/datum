@@ -542,7 +542,9 @@ as `nginx` for the nginx error log at `error` and higher. The agent reads the ma
 and sends at most 1,000 log lines per minute for each service; the other lines stay in the local
 journal. It also sends `datum_agent_dropped_events_total{component, reason}`: the events that it
 drops, with `reason` `cap` (over the log cap), `buffer_full` or `error`. A line that a role file
-drops on purpose does not count. Test a role file with `vector test`: each has a `tests:` block.
+drops on purpose does not count. A JSON journal line gives its fields as attributes: a name that does
+not start with a letter or `_` gets a `_` in front, and only the first 64 names stay, so one line
+cannot make Datum refuse its batch. Test a role file, and `logs.yaml`, with `vector test`: each has a `tests:` block.
 
 ## Configuration
 

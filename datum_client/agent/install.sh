@@ -138,8 +138,19 @@ transforms:
           del(record.level)
           del(record.msg)
           del(record.message)
-          fields = map_keys(compact(record)) -> |key| { replace(key, r'[^a-zA-Z0-9_]', "_") }
+          # An attribute name must start with a letter or "_", and a line carries 64 at most.
+          fields = map_keys(compact(record)) -> |key| {
+            name = replace(key, r'[^a-zA-Z0-9_]', "_")
+            if match(name, r'^[a-zA-Z_]') { name } else { "_" + name }
+          }
           attributes = map_values(fields) -> |value| { to_string(value) ?? encode_json(value) }
+          if length(attributes) > 64 {
+            kept = {}
+            for_each(slice!(keys(attributes), 0, 64)) -> |_index, name| {
+              kept = set!(kept, [name], get!(attributes, [name]))
+            }
+            attributes = kept
+          }
         }
       }
       # Go writes a panic or a fatal runtime error as plain text on stderr.
@@ -193,6 +204,40 @@ sinks:
       when_full: drop_newest
 VECTOR
 	sink_proxy
+	cat <<'VECTOR'
+
+tests:
+  - name: a JSON line keeps only attribute names that Datum accepts
+    inputs:
+      - insert_at: logs_journal
+        type: log
+        log_fields:
+          PRIORITY: "6"
+          _SYSTEMD_UNIT: metal.service
+          message: '{"msg": "hello", "level": "info", "2xx": 3, "a-b": "x"}'
+    outputs:
+      - extract_from: logs_journal
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(.message, "hello")
+              assert_eq!(.attributes, {"_2xx": "3", "a_b": "x"})
+  - name: a JSON line with more than 64 fields keeps 64
+    inputs:
+      - insert_at: logs_journal
+        type: log
+        log_fields:
+          PRIORITY: "6"
+          _SYSTEMD_UNIT: metal.service
+          message: '{"msg": "wide", "f01": 1, "f02": 1, "f03": 1, "f04": 1, "f05": 1, "f06": 1, "f07": 1, "f08": 1, "f09": 1, "f10": 1, "f11": 1, "f12": 1, "f13": 1, "f14": 1, "f15": 1, "f16": 1, "f17": 1, "f18": 1, "f19": 1, "f20": 1, "f21": 1, "f22": 1, "f23": 1, "f24": 1, "f25": 1, "f26": 1, "f27": 1, "f28": 1, "f29": 1, "f30": 1, "f31": 1, "f32": 1, "f33": 1, "f34": 1, "f35": 1, "f36": 1, "f37": 1, "f38": 1, "f39": 1, "f40": 1, "f41": 1, "f42": 1, "f43": 1, "f44": 1, "f45": 1, "f46": 1, "f47": 1, "f48": 1, "f49": 1, "f50": 1, "f51": 1, "f52": 1, "f53": 1, "f54": 1, "f55": 1, "f56": 1, "f57": 1, "f58": 1, "f59": 1, "f60": 1, "f61": 1, "f62": 1, "f63": 1, "f64": 1, "f65": 1}'
+    outputs:
+      - extract_from: logs_journal
+        conditions:
+          - type: vrl
+            source: |
+              assert_eq!(length!(.attributes), 64)
+              assert!(!exists(.attributes.f65))
+VECTOR
 }
 
 write_metrics_config() {

@@ -1,4 +1,7 @@
+import shutil
 import subprocess
+
+import pytest
 
 from datum_client.agent import get_install_script, get_role_config
 
@@ -79,3 +82,12 @@ def test_each_role_gets_its_own_file(tmp_path):
 
 def test_a_shared_role_adds_no_sink():
     assert "sinks:" not in get_role_config("nginx")
+
+
+@pytest.mark.skipif(shutil.which("vector") is None, reason="needs the vector binary")
+def test_the_log_transform_passes_its_vector_tests(tmp_path):
+    config = render(PRODUCT="metal", SEND_METRICS="false")
+    logs = config[: config.index("\nsources:", config.index("sources:") + 1)]
+    (tmp_path / "logs.yaml").write_text(logs)
+
+    subprocess.run(["vector", "test", str(tmp_path / "logs.yaml")], check=True)
