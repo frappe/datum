@@ -535,7 +535,9 @@ rule can name the sender that loses data.
 `warning` and higher, and an optional role file of the owner. Atlas and Cargo get the script
 from `datum_client.agent.get_install_script()` and run it over SSH. Its header lists the
 variables. `get_role_config()` gives a role file for a program that many machines run, such
-as `nginx` for the nginx error log. Test a role file with `vector test`: each has a `tests:` block.
+as `nginx` for the nginx error log at `error` and higher. The agent reads the machine metrics each 60 s,
+and sends at most 1,000 log lines per minute for each service; the other lines stay in the local
+journal. Test a role file with `vector test`: each has a `tests:` block.
 
 ## Configuration
 

@@ -1,4 +1,4 @@
-# The nginx error log. The access log stays on the machine: metrics count requests.
+# The nginx error log at error and higher. Warnings and the access log stay on the machine: metrics count requests.
 sources:
   nginx_errors:
     type: file
@@ -12,11 +12,15 @@ transforms:
     drop_on_abort: true
     drop_on_error: true
     source: |
-      levels = {"warn": "warning", "error": "error", "crit": "critical", "alert": "alert", "emerg": "emergency"}
+      levels = {"error": "error", "crit": "critical", "alert": "alert", "emerg": "emergency"}
       message = string!(.message)
       parsed = parse_regex!(message, r'^\S+ \S+ \[(?P<level>\w+)\]')
       level = get(levels, [parsed.level]) ?? null
       if level == null {
+        abort
+      }
+      # An upstream that refuses, resets or times out is one site. The site and proxy checks cover it.
+      if match(message, r'while (connecting to|reading response header from|sending request to) upstream|no live upstreams|upstream prematurely closed') {
         abort
       }
       # A signed URL works for whoever holds it until it expires.
@@ -50,10 +54,17 @@ tests:
               assert_eq!(.level, "critical")
               assert_eq!(.product, get_env_var!("PRODUCT"))
               assert!(contains(string!(.message), "X-Amz-Signature=redacted&x=1"))
-  - name: a notice line is dropped
+  - name: a warning line is dropped
     inputs:
       - insert_at: logs_nginx
         type: log
         log_fields:
-          message: '2026/11/14 10:00:00 [notice] 12#12: signal process started'
+          message: '2026/11/14 10:00:00 [warn] 12#12: *3 an upstream response is buffered to a temporary file'
+    no_outputs_from: [logs_nginx]
+  - name: an upstream error is dropped
+    inputs:
+      - insert_at: logs_nginx
+        type: log
+        log_fields:
+          message: '2026/11/14 10:00:00 [error] 12#12: *3 connect() failed (111: Connection refused) while connecting to upstream, client: 10.0.0.1'
     no_outputs_from: [logs_nginx]

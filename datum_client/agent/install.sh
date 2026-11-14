@@ -159,10 +159,18 @@ transforms:
         "attributes": attributes,
       }
 
+  # A service that logs in a loop cannot raise the cost. The lines over the cap stay in the local journal.
+  capped_logs:
+    type: throttle
+    inputs: ["logs_*"]
+    threshold: 1000
+    window_secs: 60
+    key_field: "{{ service }}"
+
 sinks:
   datum_logs:
     type: http
-    inputs: ["logs_*"]
+    inputs: [capped_logs]
     uri: "\${DATUM_ENDPOINT}/v1/logs/ingest"
     method: post
     encoding:
@@ -191,7 +199,7 @@ write_metrics_config() {
 sources:
   system_raw:
     type: host_metrics
-    scrape_interval_secs: 30
+    scrape_interval_secs: 60
     collectors: [cpu, memory, filesystem, load, network, disk, host]
     filesystem:
       filesystems:
@@ -228,7 +236,8 @@ transforms:
         "network_receive_errs_total": "system_network_receive_errors_total",
         "network_transmit_errs_total": "system_network_transmit_errors_total",
       }
-      windows = {"load1": "1m", "load5": "5m", "load15": "15m"}
+      # No reader uses the 1 min load or the guest CPU modes, so they are not sent.
+      windows = {"load5": "5m", "load15": "15m"}
       source_name = string!(.name)
       tags = {}
       window = get(windows, [source_name]) ?? null
@@ -242,6 +251,9 @@ transforms:
       if starts_with(source_name, "cpu_") {
         tags.cpu = .tags.cpu
         tags.mode = if .tags.mode == "io_wait" { "iowait" } else { .tags.mode }
+        if includes(["guest", "guest_nice"], tags.mode) {
+          abort
+        }
       } else if starts_with(source_name, "filesystem_") {
         tags.mountpoint = .tags.mountpoint
         tags.device = .tags.device
