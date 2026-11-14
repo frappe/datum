@@ -8,7 +8,8 @@
 # SEND_METRICS                 true or false. A host sets false, because metald sends its metrics.
 # INFO_UNITS                   systemd units whose info lines are sent too, such as metal.service.
 # ROLE_UNITS                   systemd units that the role file reads itself.
-# ROLE_CONFIG                  The role file. Its transforms are named metrics_* and logs_*.
+# ROLE_CONFIG                  The role file. Its transforms are named metrics_* and logs_*. A machine
+#                              with more than one role gives one YAML document for each, split by ---.
 # ROLE_ENVIRONMENT             KEY=VALUE lines that the role file reads, such as a scrape token.
 # DATUM_PROXY                  An HTTP proxy for the writes to Datum.
 
@@ -274,6 +275,14 @@ VECTOR
 	sink_proxy
 }
 
+# Writes role-1.yaml, role-2.yaml and so on into the directory, one file for each YAML document.
+write_role_files() {
+	printf '%s\n' "$ROLE_CONFIG" | awk -v directory="$1" '
+		BEGIN { file = directory "/role-1.yaml" }
+		/^---$/ { count++; file = directory "/role-" count + 1 ".yaml"; next }
+		{ print > file }'
+}
+
 rm -rf "$config_dir.next"
 install -d -m 750 -g vector "$config_dir.next"
 write_logs_config > "$config_dir.next/logs.yaml"
@@ -281,7 +290,7 @@ if [ "$SEND_METRICS" = true ]; then
 	write_metrics_config > "$config_dir.next/metrics.yaml"
 fi
 if [ -n "${ROLE_CONFIG:-}" ]; then
-	printf '%s\n' "$ROLE_CONFIG" > "$config_dir.next/role.yaml"
+	write_role_files "$config_dir.next"
 fi
 chgrp -R vector "$config_dir.next"
 

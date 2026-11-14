@@ -55,3 +55,21 @@ def test_a_proxy_goes_on_each_sink():
     config = render(PRODUCT="metal", SEND_METRICS="true", DATUM_PROXY="http://127.0.0.1:9003")
 
     assert config.count('https: "http://127.0.0.1:9003"') == 2
+
+
+def test_each_role_gets_its_own_file(tmp_path):
+    script = get_install_script()
+    functions = script[
+        script.index("write_role_files() {") : script.index('rm -rf "$config_dir.next"')
+    ]
+    subprocess.run(
+        ["bash", "-c", functions + f'write_role_files "{tmp_path}"'],
+        env={
+            "PATH": "/usr/bin:/bin",
+            "ROLE_CONFIG": "sources:\n  garage: {}\n---\nsources:\n  nginx: {}",
+        },
+        check=True,
+    )
+
+    assert (tmp_path / "role-1.yaml").read_text() == "sources:\n  garage: {}\n"
+    assert (tmp_path / "role-2.yaml").read_text() == "sources:\n  nginx: {}\n"
