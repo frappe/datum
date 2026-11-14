@@ -48,7 +48,7 @@ tests:
           - type: vrl
             source: |
               assert_eq!(.level, "critical")
-              assert_eq!(.product, "cargo")
+              assert_eq!(.product, get_env_var!("PRODUCT"))
               assert!(contains(string!(.message), "X-Amz-Signature=redacted&x=1"))
   - name: a notice line is dropped
     inputs:
