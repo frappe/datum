@@ -54,7 +54,7 @@ Names are sanitized to Datum's patterns. Product, service and source retain slas
 
 ## Delivery and limits
 
-The sink wraps its JSON array as `{"lines": [...]}`. It batches at most 10,000 events, targets 256 KiB before serialization, and flushes after five seconds. One concurrent request and a limit of 12 requests per 60 seconds match Datum's log route. Memory buffering and acknowledgements let file sources replay unaccepted records after restart, while the source files still exist. Keep files long enough for outage recovery. Delivery is at least once: a lost HTTP acknowledgement can cause duplicates.
+The sink wraps its JSON array as `{"lines": [...]}`. It batches at most 10,000 events, targets 4 MiB before serialization, and flushes after five seconds. One concurrent request and a limit of 12 requests per 60 seconds match Datum's log route. Memory buffering and acknowledgements let file sources replay unaccepted records after restart, while the source files still exist. Keep files long enough for outage recovery. Delivery is at least once: a lost HTTP acknowledgement can cause duplicates.
 
 The byte target is not a hard HTTP-body limit. JSON escaping and an individual large event can exceed it. Verify actual payload sizes against your reverse proxy, especially for large attributes, which Datum does not bound by bytes. A `413`, `401` or `422` is terminal under Vector's default retry policy and drops the batch. Transient failures are retried; prolonged outages apply backpressure.
 

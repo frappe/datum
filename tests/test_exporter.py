@@ -123,6 +123,32 @@ def test_service_lifecycle_uses_correct_scope_and_preserves_data(tmp_path, monke
     ]
     service.restart()
     assert validation.call_count == 2
+    assert "ExecReload=/bin/kill -HUP $MAINPID" in unit
+    run.reset_mock()
+    assert (
+        main(
+            [
+                "--scope",
+                scope,
+                "--directory",
+                str(directory),
+                "--binary",
+                str(service.binary),
+                "service",
+                "reload",
+                "--name",
+                "proof",
+            ]
+        )
+        == 0
+    )
+    assert validation.call_count == 3
+    run.assert_called_once_with(prefix + ["reload", "proof.service"], check=True, timeout=90)
+    run.reset_mock()
+    validation.side_effect = subprocess.CalledProcessError(78, "vector")
+    with pytest.raises(subprocess.CalledProcessError):
+        service.reload()
+    run.assert_not_called()
     service.remove()
     assert not path.exists()
     assert checkpoint.read_text() == "keep"

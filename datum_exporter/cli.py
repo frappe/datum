@@ -43,7 +43,7 @@ def parser() -> argparse.ArgumentParser:
     actions.add_parser("validate", help="validate application and shared configuration")
     service = actions.add_parser("service", help="manage a systemd service")
     service.add_argument(
-        "operation", choices=("install", "start", "restart", "stop", "status", "remove")
+        "operation", choices=("install", "start", "restart", "reload", "stop", "status", "remove")
     )
     service.add_argument("--name", default="datum-exporter")
     service.add_argument("--no-start", action="store_true", help="install without starting")

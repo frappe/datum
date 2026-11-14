@@ -73,7 +73,7 @@ sinks:
     payload_suffix: "}"
     batch:
       max_events: 10000
-      max_bytes: 262144
+      max_bytes: 4194304
       timeout_secs: 5
     request:
       concurrency: 1

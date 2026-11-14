@@ -110,8 +110,9 @@ transforms:
     assert result.returncode == 0, result.stdout + result.stderr
 
 
+@pytest.mark.parametrize("large_batches", [False, True])
 def test_http_payloads_pass_datum_validation_and_secrets_resolve_from_working_directory(
-    tmp_path, vector_binary
+    tmp_path, vector_binary, large_batches
 ):
     received = []
 
@@ -156,6 +157,8 @@ transforms:
         {"message": 'escaping\n\t\u0001"\\', "a b": 1, "a-b": 2, "nested": {"x": 1}},
     ]
     records.extend({"message": f"line {index}"} for index in range(10_001))
+    if large_batches:
+        records.extend({"message": f"{index}:" + "\u0001" * 8000} for index in range(800))
     try:
         result = subprocess.run(
             [vector_binary, "--config", str(app), "--config", str(config)],
@@ -173,8 +176,11 @@ transforms:
             assert authorization == "Bearer test-token"
             batch = LogLineRequest.model_validate_json(body)
             assert len(batch.lines) <= 10_000
-            assert len(body) < 1024 * 1024
+            assert len(body) < 32 * 1024 * 1024
             lines.extend(batch.lines)
+        if large_batches:
+            assert max(len(body) for _, _, body in received) > 4 * 1024 * 1024
+            assert len(received) <= 5
         assert len(lines) == len(records)
         assert lines[1].message == "fallback"
         assert len(lines[2].message) == 8192

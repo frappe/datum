@@ -52,6 +52,7 @@ class Service:
             "[Service]\nType=exec\n"
             f"WorkingDirectory={directory}\n"
             f"ExecStart={binary} --threads 2 --config app.yaml --config datum.yaml\n"
+            "ExecReload=/bin/kill -HUP $MAINPID\n"
             "Restart=on-failure\nRestartSec=5\nTimeoutStopSec=60\nUMask=0077\n\n"
             f"[Install]\nWantedBy={target}\n"
         )
@@ -75,6 +76,9 @@ class Service:
 
     def restart(self) -> None:
         self._action("restart", validate_config=True)
+
+    def reload(self) -> None:
+        self._action("reload", validate_config=True)
 
     def stop(self) -> None:
         self._action("stop")

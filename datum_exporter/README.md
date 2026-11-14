@@ -31,7 +31,7 @@ helper does not change login policy. Logs must be readable and checkpoint direct
 by the service user. Run user commands in that user's login session, not via `sudo`.
 
 `--token-file -` reads the token from stdin. To rotate credentials, repeat `init`, then run
-`datum-exporter service restart`. Existing application configuration and checkpoints are kept.
+`datum-exporter service reload`. Existing application configuration and checkpoints are kept.
 
 ## System-wide installation
 
@@ -45,11 +45,13 @@ Global options precede the command. Use `--directory /path/to/config` and
 `--binary /absolute/path/to/vector` to override locations. Each instance needs its own
 configuration directory and `service --name NAME` (without `.service`).
 
-Both scopes support `service install`, `start`, `restart`, `stop`, `status`, and `remove`.
+Both scopes support `service install`, `start`, `restart`, `reload`, `stop`, `status`, and `remove`.
 Installation enables the service and restarts it, including on repeated installation.
 Use `service install --no-start` to enable it without changing its running state.
-Start, restart and install validate configuration first. Validation resolves secrets but
+Start, restart, reload and install validate configuration first. Validation resolves secrets but
 skips environment checks and network health checks; it does not prove ingestion works.
+Reload sends SIGHUP without replacing the process. Completion is asynchronous; verify subsequent
+delivery. For older units, run `service install --no-start` once to add reload support.
 Removal stops and disables the service, deletes only its managed unit, and retains the binary,
 config, secrets and checkpoints. Unrelated unit files are refused. systemctl failures are
 reported; an activation failure leaves the installed unit/config available for diagnosis.
@@ -111,7 +113,6 @@ CLI and service unit tests. Set `VECTOR_REQUIRE_TESTS=1` to require the real Vec
 For live lifecycle verification on a disposable Linux systemd host, run
 `python tests/exporter/systemd_smoke.py --scope user` as a login user and the same script
 with `--scope system` as root. It downloads the pinned binary into a temporary directory,
-uses `datum-exporter-proof.service`, delivers logs to a local HTTP receiver, rotates credentials,
-checks restart/checkpoint behavior, and removes its unit. Do not run it concurrently with
-another proof in the same scope. The receiver verifies transport; the repository's existing
-Vector tests separately verify the Datum ingestion schema.
+uses `datum-exporter-proof-PID.service`, verifies credential reload without a PID change,
+invalid-config rejection, restart/checkpoints, and cleanup against a local HTTP receiver.
+The Vector tests separately verify the Datum ingestion schema.

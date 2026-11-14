@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import threading
 import time
@@ -54,17 +55,44 @@ def main():
             config.component("sources", "app", {"read_from": "beginning"})
             config.save(binary=binary)
             service = Service(
-                directory, binary=binary, scope=args.scope, name="datum-exporter-proof"
+                directory,
+                binary=binary,
+                scope=args.scope,
+                name=f"datum-exporter-proof-{os.getpid()}",
             )
             try:
                 service.install(start=False)
                 service.start()
                 wait_for(received, "first-token", "first record")
                 install(directory, endpoint=endpoint, token="rotated-token")
-                service.restart()
+                command = ["systemctl"] + (["--user"] if args.scope == "user" else [])
+
+                def pid():
+                    return subprocess.check_output(
+                        command + ["show", "--property=MainPID", "--value", service.name], text=True
+                    ).strip()
+
+                original_pid = pid()
+                assert original_pid != "0"
+                service.reload()
                 with logfile.open("a") as output:
                     output.write("after rotation\n")
                 wait_for(received, "rotated-token", "after rotation")
+                assert pid() == original_pid
+                previous = config.path.read_text()
+                config.path.write_text("sources: [invalid]\n")
+                try:
+                    service.reload()
+                except subprocess.CalledProcessError:
+                    pass
+                else:
+                    raise AssertionError("invalid config was accepted")
+                finally:
+                    config.path.write_text(previous)
+                assert pid() == original_pid
+                with logfile.open("a") as output:
+                    output.write("after invalid reload\n")
+                wait_for(received, "rotated-token", "after invalid reload")
                 assert service.status() == 0
                 service.stop()
                 service.start()
@@ -76,9 +104,14 @@ def main():
                 assert (directory / "datum/token").read_text() == "rotated-token"
                 assert list((directory / "data").rglob("*")), "checkpoints were removed"
                 messages = [line["message"] for _, body in received for line in body["lines"]]
-                assert messages == ["first record", "after rotation", "after restart"], messages
+                assert messages == [
+                    "first record",
+                    "after rotation",
+                    "after invalid reload",
+                    "after restart",
+                ], messages
                 print(
-                    f"PASS: {args.scope} install, start, delivery, rotation, restart, stop, removal"
+                    f"PASS: {args.scope} install, start, delivery, reload (same PID), invalid reload, restart, stop, removal"
                 )
             finally:
                 service.remove()
