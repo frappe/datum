@@ -23,11 +23,12 @@ SELECT ts, metric, resource_id, labels, value FROM datum.samples
 WHERE ts > now() - INTERVAL 2 DAY
   AND ts < (SELECT if(count() = 0, now64(3), min(ts)) FROM datum.samples_recent);
 
--- The newest value of each series of one metric in the last `window` seconds.
+-- The newest value of each series of one metric in the last `window` seconds. A sample from a clock that runs fast must not
+-- stay the newest value, so both views leave out samples more than 1 minute in the future.
 CREATE OR REPLACE VIEW datum.latest_value AS
 SELECT resource_id, labels, argMax(value, ts) AS value, max(ts) AS last_ts
 FROM datum.samples_recent
-WHERE metric = {metric:String} AND ts > now() - toIntervalSecond({window:UInt32})
+WHERE metric = {metric:String} AND ts > now() - toIntervalSecond({window:UInt32}) AND ts <= now() + INTERVAL 1 MINUTE
 GROUP BY resource_id, labels;
 
 -- The growth of each counter series of one metric in the last `window` seconds. A drop is a reset, so the new value is growth.
@@ -37,7 +38,7 @@ SELECT resource_id, labels, length(vals) AS samples,
 FROM (
     SELECT resource_id, labels, arrayMap(x -> x.2, arraySort(groupArray((ts, value)))) AS vals
     FROM datum.samples_recent
-    WHERE metric = {metric:String} AND ts > now() - toIntervalSecond({window:UInt32})
+    WHERE metric = {metric:String} AND ts > now() - toIntervalSecond({window:UInt32}) AND ts <= now() + INTERVAL 1 MINUTE
     GROUP BY resource_id, labels
 );
 
