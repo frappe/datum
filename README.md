@@ -360,7 +360,7 @@ to drain.
 
 ### Logs
 
-Point a log shipper (Fluent Bit, Vector, the OTel collector) at `/v1/logs/ingest`
+Point a log shipper, such as the Datum agent (Vector), at `/v1/logs/ingest`
 with the same `Authorization: Bearer <jwt>` header:
 
 ```bash
@@ -377,8 +377,8 @@ curl -X POST http://localhost:8000/v1/logs/ingest \
          "attributes": {"queue": "default"}}]}'
 ```
 
-The body may also be a bare array of lines, which is what Fluent Bit's `http`
-output sends with `Format json`.
+The body may also be a bare array of lines, which is what the Vector `http` sink
+of the Datum agent sends with `codec: json`.
 
 Up to 10,000 lines per batch, either way. `product`, `service` and `source` must
 match `^[a-zA-Z0-9_./-]{1,200}$`; `level` is one of `emergency`, `alert`, `critical`,

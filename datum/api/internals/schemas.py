@@ -98,7 +98,7 @@ class LogLine(BaseModel):
         }
 
 
-# A batch of lines with no envelope: what Fluent Bit's `Format json` posts, since it cannot wrap one.
+# A batch of lines with no envelope: what the Vector `http` sink of the Datum agent posts with `codec: json`.
 LogLineBatch = Annotated[list[LogLine], Field(min_length=1, max_length=MAX_LOG_BATCH)]
 
 
