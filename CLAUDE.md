@@ -17,7 +17,7 @@ ClickHouse stores them. Readers get them back from ClickHouse directly — datum
   hold a `TABLE` and a `COLUMNS` constant and pass both to `provider.insert(...)`. The provider
   knows no table names at all, so adding a table is a new route constant, not a provider
   change.
-- **Datum issues no DDL.** The database, every table and both ClickHouse users are made by
+- **Datum issues no DDL.** The database, every table and all three ClickHouse users are made by
   `datum/migrations/`, run before the service starts. `create_app`'s lifespan pings ClickHouse
   and refuses to start if it cannot answer. Do not add schema creation back into the service:
   two places creating one table is two definitions that drift.
@@ -66,6 +66,9 @@ ClickHouse stores them. Readers get them back from ClickHouse directly — datum
     - `003_logs.sql` — `logs`, the log lines table
     - `004_log_stats.sql` — `daily_log_stats`, the log twin of
       `daily_ingestion_stats`, filled by a view on `logs`
+    - `005_traces.sql` — `traces`
+    - `006_beacon.sql` — `samples_recent` (2 days, ordered by metric), the `latest_value` and
+      `counter_increase` views, and the select-only `beacon` user with its limits profile
     - `migrations.py` — `datum-migrate`; substitutes the passwords, splits and runs
   - `api/app.py` — `create_app(settings, tokens, provider)`; builds the provider once at
     startup and pings it, so a missing schema fails loudly there
@@ -146,10 +149,11 @@ Insights ───────────────────────�
   label becomes hot enough to matter, promote it to a column rather than adding an index.
 - `Delta` on the timestamp and `Gorilla` on the value are doing most of the compression. Do not
   drop the codecs.
-- `traces` is the only table with a TTL, at 7 days, and it drops whole parts only. Nothing
-  else expires: a sample is small and its history is the point, so cardinality there is a
-  permanent cost, not one retention eventually clears. A TTL belongs on a table whose volume
-  follows traffic rather than fleet size, which is spans and not metrics.
+- Retention: `samples` 90 days, `logs` 30 days, `traces` 7 days, `samples_recent` 2 days.
+  The daily stats never expire. Cardinality still costs for 90 days, so keep labels few.
+- Log levels are the eight syslog names. The telemetry contract in Beacon's
+  `docs/telemetry.md` sets the names, labels and log fields that every producer uses; the
+  Datum agent in `datum_client/agent/` is its one implementation for machines.
 - Losing ClickHouse loses in-flight data. That is accepted. There is no queue, no spool file
   and no retry, because blocking a producer's collection tick is worse than a gap in a chart.
 

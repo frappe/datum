@@ -28,6 +28,7 @@ def get_identity(
             detail="Unknown or missing token.",
             headers={"WWW-Authenticate": "Bearer"},
         )
+    request.state.resource_id = identity.resource_id
     return identity
 
 

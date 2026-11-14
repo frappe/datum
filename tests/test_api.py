@@ -1,8 +1,42 @@
+import json
+
+
 def test_health_is_unversioned(client):
     response = client.get("/health")
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+
+
+def test_health_fails_when_clickhouse_does_not_answer(client, provider, monkeypatch):
+    monkeypatch.setattr(provider, "ping", lambda: False)
+    response = client.get("/health")
+
+    assert response.status_code == 503
+    assert response.json() == {"status": "clickhouse unreachable"}
+
+
+def test_a_refused_request_names_its_sender(client, caplog):
+    client.post("/v1/ingest", json={})
+    message = caplog.records[-1].getMessage()
+    line = json.loads(message.removeprefix("<4>"))
+
+    assert message.startswith("<4>")
+
+    assert line == {
+        "level": "warning",
+        "msg": "request refused",
+        "route": "/v1/ingest",
+        "status": 422,
+        "sender": "acme",
+    }
+
+
+def test_an_accepted_request_logs_nothing(client, caplog):
+    sample = {"metric": "up", "value": 1, "ts": "2026-08-05T10:00:00Z"}
+    assert client.post("/v1/ingest", json={"samples": [sample]}).status_code == 200
+
+    assert not [record for record in caplog.records if record.name == "datum.refusals"]
 
 
 def test_health_is_absent_from_the_schema(client):

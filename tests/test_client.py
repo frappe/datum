@@ -47,7 +47,13 @@ def posted(monkeypatch):
     @contextmanager
     def urlopen(request, timeout=None):
         body = json.loads(request.data)
-        recorder.requests.append({"url": request.full_url, "samples": body["samples"]})
+        recorder.requests.append(
+            {
+                "url": request.full_url,
+                "samples": body.get("samples", []),
+                "lines": body.get("lines"),
+            }
+        )
         if recorder.during:
             recorder.during.pop(0)()
         if recorder.raises:
@@ -266,6 +272,25 @@ def test_send_still_posts_one_shot_without_buffering(posted):
     assert datum.send(batch(2)) == 200
     assert len(posted.samples) == 2
     assert len(datum) == 0
+
+
+def test_log_lines_go_to_the_log_route_in_one_request(posted):
+    line = {
+        "ts": "2026-11-14T10:00:00Z",
+        "product": "pilot",
+        "service": "update",
+        "source": "event",
+        "level": "error",
+        "message": "x",
+    }
+
+    assert make_datum().send_logs([line]) == 200
+    assert posted.requests == [{"url": f"{URL}/v1/logs/ingest", "samples": [], "lines": [line]}]
+
+
+def test_no_log_lines_send_nothing(posted):
+    assert make_datum().send_logs([]) == 0
+    assert posted.requests == []
 
 
 def test_the_token_and_path_are_what_datum_expects(posted):

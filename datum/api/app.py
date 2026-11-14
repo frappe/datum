@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import json
+import logging
+import sys
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
 from datum.api import errors
 from datum.api.internals import ClickHouseProvider, DatumProvider, TokenVerifier
@@ -12,6 +16,16 @@ from datum.config import Settings
 
 TITLE = "datum"
 VERSION = "0.1.0"
+
+# One JSON line on stderr for each refused /v1 request. The `<N>` prefix gives journald its
+# syslog priority, so the Datum agent sends it with the warnings, without the access log.
+refusals = logging.getLogger("datum.refusals")
+refusals.propagate = False
+if not refusals.handlers:
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setFormatter(logging.Formatter("%(message)s"))
+    refusals.addHandler(handler)
+    refusals.setLevel(logging.INFO)
 
 TAGS = [
     {"name": "ingest", "description": "Write samples. The token decides who they belong to."},
@@ -68,9 +82,36 @@ def create_app(
     errors.install(app)
     app.include_router(router)
 
+    @app.middleware("http")
+    async def log_refusal(request: Request, call_next):
+        try:
+            response = await call_next(request)
+        except Exception:
+            log_refused_request(request, 500)
+            raise
+        if response.status_code >= 400 and request.url.path.startswith("/v1/"):
+            log_refused_request(request, response.status_code)
+        return response
+
     @app.get("/health", include_in_schema=False)
-    async def health() -> dict:
-        """Liveness probe. Unversioned, so a future /v2 never breaks it."""
-        return {"status": "ok"}
+    def health() -> JSONResponse:
+        """Unversioned, so a future /v2 never breaks it. A 503 when ClickHouse does not answer,
+        because then every write fails."""
+        if not app.state.provider.ping():
+            return JSONResponse(status_code=503, content={"status": "clickhouse unreachable"})
+        return JSONResponse(content={"status": "ok"})
 
     return app
+
+
+def log_refused_request(request: Request, status: int) -> None:
+    """A 5xx is a fault of Datum; a 4xx is a fault of the sender, named when its token was valid."""
+    level, priority = ("error", 3) if status >= 500 else ("warning", 4)
+    line = {
+        "level": level,
+        "msg": "request refused",
+        "route": request.url.path,
+        "status": status,
+        "sender": getattr(request.state, "resource_id", ""),
+    }
+    refusals.info(f"<{priority}>{json.dumps(line)}")

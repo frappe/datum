@@ -42,7 +42,7 @@ RATE_PERIOD = 60.0
 # overridable per deployment.
 TIMEOUT = 30.0
 
-# Log lines in one write. Higher than the metric batch cap because a Fluent Bit
+# Log lines in one write. Higher than the metric batch cap because a log shipper
 # flush packs many lines, but bounded so one oversized flush cannot stream
 # indefinitely into ClickHouse.
 MAX_LOG_BATCH = 10_000

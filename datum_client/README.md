@@ -301,6 +301,26 @@ status = datum.send(batch)  # skips the buffer, returns the status
 `send` raises `ValueError` above 10 000 samples in one call, and returns `0`
 for nothing to send. `record` has no such limit — it chunks.
 
+Log lines go the same way, in one request to `/v1/logs/ingest`:
+
+```python
+status = datum.send_logs(
+    [
+        {
+            "ts": ...,
+            "product": "pilot",
+            "service": "update",
+            "source": "event",
+            "level": "error",
+            "message": ...,
+        }
+    ]
+)
+```
+
+It has the same limit and returns the same statuses. Retry it only when a
+repeated line does no harm.
+
 | Status | What happened |
 |---|---|
 | 200 | stored |
