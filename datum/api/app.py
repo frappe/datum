@@ -11,13 +11,15 @@ from fastapi.responses import JSONResponse
 from datum.api import errors
 from datum.api.internals import ClickHouseProvider, DatumProvider, TokenVerifier
 from datum.api.limiter import RateLimiter
+from datum.api.refusal_log import RefusalLog
 from datum.api.routes import router
 from datum.config import Settings
 
 TITLE = "datum"
 VERSION = "0.1.0"
 
-# One JSON line on stderr for each refused /v1 request. The `<N>` prefix gives journald its
+# One JSON line on stderr for refused /v1 requests, at most one a minute for each sender,
+# route and status. The `<N>` prefix gives journald its
 # syslog priority, so the Datum agent sends it with the warnings, without the access log.
 refusals = logging.getLogger("datum.refusals")
 refusals.propagate = False
@@ -79,6 +81,7 @@ def create_app(
     app.state.tokens = tokens or TokenVerifier.from_env()
     app.state.provider = provider
     app.state.limiter = RateLimiter()
+    app.state.refusal_log = RefusalLog()
     errors.install(app)
     app.include_router(router)
 
@@ -106,12 +109,18 @@ def create_app(
 
 def log_refused_request(request: Request, status: int) -> None:
     """A 5xx is a fault of Datum; a 4xx is a fault of the sender, named when its token was valid."""
+    sender = getattr(request.state, "resource_id", "")
+    count = request.app.state.refusal_log.count_refusal(sender, request.url.path, status)
+    if not count:
+        return
+
     level, priority = ("error", 3) if status >= 500 else ("warning", 4)
     line = {
         "level": level,
         "msg": "request refused",
         "route": request.url.path,
         "status": status,
-        "sender": getattr(request.state, "resource_id", ""),
+        "sender": sender,
+        "count": count,
     }
     refusals.info(f"<{priority}>{json.dumps(line)}")
