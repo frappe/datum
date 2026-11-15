@@ -29,7 +29,15 @@ def test_a_refused_request_names_its_sender(client, caplog):
         "route": "/v1/ingest",
         "status": 422,
         "sender": "acme",
+        "count": 1,
     }
+
+
+def test_refusals_within_a_minute_share_one_line(client, caplog):
+    for _ in range(3):
+        client.post("/v1/ingest", json={})
+
+    assert len([record for record in caplog.records if record.name == "datum.refusals"]) == 1
 
 
 def test_an_accepted_request_logs_nothing(client, caplog):

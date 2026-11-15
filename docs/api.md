@@ -116,4 +116,4 @@ Datum applies these limits after it reads the body. Caddy on the Datum host sets
 | 429 | Too many requests to the route. `Retry-After` gives the seconds to wait. |
 | 503 | Datum runs, but ClickHouse does not answer |
 
-For each refused `/v1` request, Datum writes one JSON line to stderr with `route`, `status` and `sender`. `sender` is the `resource_id` of the token when the token is valid. A 4xx line has level `warning`, and a 5xx line has level `error`. The Datum agent on the Datum host sends these lines to `logs`, so a rule can find the sender that loses data.
+For refused `/v1` requests, Datum writes one JSON line to stderr with `route`, `status`, `sender` and `count`. Each process writes at most one line a minute for one sender, route and status, and `count` is the number of refusals since the line before it. A sender that retries many times a second thus cannot make Datum the largest writer of its own logs. `sender` is the `resource_id` of the token when the token is valid. A 4xx line has level `warning`, and a 5xx line has level `error`. The Datum agent on the Datum host sends these lines to `logs`, so a rule can find the sender that loses data.
